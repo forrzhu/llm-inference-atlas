@@ -1,0 +1,147 @@
+(function(root){
+'use strict';
+const M=root.QuantModel||(typeof require==='function'?require('./model.js'):null);
+const H=root.QuantHardware||(typeof require==='function'?require('./hardware-model.js'):null);
+const locations={ssd:'SSD',host:'CPU DRAM',cpu:'CPU',weights:'GPU DRAM / Model weights',activations:'GPU DRAM / Activations',kv:'GPU DRAM / KV cache',l2:'L2 cache',shared:'Shared Memory',registers:'Registers',cuda:'CUDA Cores',tensor:'Tensor Cores',sm:'Attention kernel on SM'};
+const titles=['Weight quantization and packing','Model loading','Tokenization and embedding','Input RMSNorm','QKV projections','Rotary position embedding (RoPE)','KV cache append','Attention scores: QKᵀ','Softmax','Attention output: PV','Attention output projection','Residual add: attention','Post-attention RMSNorm','FFN gate and up projections','SiLU and elementwise product','FFN down projection','Residual add: FFN','Remaining Transformer layers','Final RMSNorm, LM head and sampling','Autoregressive decode loop'];
+const goals=[
+ 'Prepare the checkpoint representation. Runtime weight quantization is separate from inference.',
+ 'Load model parameters once. Keep the GPU copy resident across forward passes.',
+ 'Map input token IDs to FP16 hidden states. Decode reuses a sampled ID and existing KV caches.',
+ 'Normalize X for attention. Preserve the original X for the residual add.',
+ 'Produce Q, K and V. Stored weight precision, GEMM operand precision and accumulator precision can differ.',
+ 'Apply position-dependent rotations to Q and K. V is unchanged.',
+ 'Append current K and V to this layer’s request cache. Q is not cached.',
+ 'Compare Q with cached K. Quantized K is converted to FP16 for this reference attention path.',
+ 'Normalize the score tile using FP32 statistics. Keep a probability tile on-chip for PV.',
+ 'Use the probability tile to combine cached V. Produce the attention output Oheads.',
+ 'Apply the learned output projection WO to the concatenated attention heads.',
+ 'Add the attention branch to the preserved X. The result R becomes the next residual stream.',
+ 'Normalize R for the FFN. Preserve R for the second residual add.',
+ 'Compute the gate and up branches of the SwiGLU FFN.',
+ 'Compute SiLU(G) ⊙ Up. This creates the FFN activation without another weight matrix.',
+ 'Project the FFN activation back to the model width.',
+ 'Add the FFN branch to R. The resulting hidden state is the input to the next layer.',
+ 'Repeat the layer operators with distinct parameters and a separate KV cache for every layer.',
+ 'Normalize the last-position hidden state, compute vocabulary logits and select the next token ID.',
+ 'Keep model parameters and KV caches. Feed the sampled ID into the next Decode forward, or stop.'
+];
+function build(recipeId='w4',phase='prefill'){
+ const r=M.recipes[recipeId],T=phase==='prefill'?8:1,S=phase==='prefill'?0:8,N=S+T;
+ if(!r)throw new Error('Unknown precision configuration');
+ const W=r.wb===4?'INT4':r.wb===8?'INT8':'FP16',KV=r.kb===4?'INT4':r.kb===8?'INT8':'FP16';
+ const entities={},stages=[],events=[];let cells={},version=0,snapshot={version,cells},stage;
+ const shapeX=`[1, ${T}, 4096]`,shapeKV=`[1, 8, S, 128]`;
+ function define(id,label,shape,parents=[],note=''){entities[id]={id,label,shape,parents,note};}
+ define('sourceW','Source linear weights','Model-dependent',[],'Original FP16 weights in this example.');
+ define('W','Linear weights W','Model-dependent',['sourceW'],'Includes WQ, WK, WV, WO, Wgate, Wup and Wdown. GPU DRAM weights remain unchanged during inference.');
+ define('params','Embedding, norm and LM head parameters','Model-dependent',[],'These parameters remain FP16 in this reference model.');
+ define('wmeta','Weight quantization parameters','Format-dependent',['sourceW'],'Scales and zero-points where required; not one uniform numeric dtype.');
+ define('ascale','Per-token activation scales','One scale per token row',[],'Computed from the current GEMM input. The metadata dtype depends on the kernel.');
+ define('prompt','Prompt text','Text',[],'Host input for Prefill.');
+ define('ids','Input token IDs',`[1, ${T}]`,phase==='prefill'?['prompt']:[],phase==='decode'?'Supplied by the previous forward; INT32 is the illustrative ID representation.':'Tokenizer output; INT32 is the illustrative ID representation.');
+ define('x','Layer input X',shapeX,['ids']);define('u','Normalized input U',shapeX,['x','params']);
+ define('q','Query Q',`[1, 32, ${T}, 128]`,['u','W']);define('k','Key K',`[1, 8, ${T}, 128]`,['u','W']);define('v','Value V',`[1, 8, ${T}, 128]`,['u','W']);
+ define('qr','Rotated query Q′',entities.q.shape,['q']);define('kr','Rotated key K′',entities.k.shape,['k']);
+ define('kc','K cache · layer 1',shapeKV,['kr'],'Request state. S is the number of cached tokens; Q is not stored here.');define('vc','V cache · layer 1',shapeKV,['v'],'Request state. Appending preserves previously cached values.');
+ define('kvmeta','KV quantization parameters','Format-dependent',['kc','vc'],'Scales and zero-points where required.');
+ define('score','Attention score tile','Tile of [1, 32, T, S]',['qr','kc'],'Logical tile; the full score matrix is not materialized in GPU DRAM.');
+ define('prob','Probability tile P','Tile of [1, 32, T, S]',['score'],'FP32 softmax statistics; FP16 P operand for PV in this example.');
+ define('oh','Attention heads Oheads',shapeX,['prob','vc'],'Heads are concatenated to the model width.');
+ define('attn','Attention projection O',shapeX,['oh','W']);define('r','Attention residual R',shapeX,['x','attn']);
+ define('u2','Normalized FFN input U2',shapeX,['r','params']);define('gate','Gate G',`[1, ${T}, dff]`,['u2','W']);define('up','Up branch',`[1, ${T}, dff]`,['u2','W']);
+ define('f','FFN activation F',`[1, ${T}, dff]`,['gate','up']);define('down','FFN output D',shapeX,['f','W']);define('xnext','Layer output Xnext',shapeX,['r','down']);
+ define('xlast','Final-layer hidden states',shapeX,['xnext'],'Output of the remaining layer stack.');
+ define('kvrest','KV caches · layers 2 … L','Per-layer K/V buffers',[],'Each remaining layer appends its own K/V; no cache is shared between different layers.');
+ define('ufinal','Final normalized hidden state','[1, 1, 4096]',['xlast','params']);define('logits','Vocabulary logits','[1, 1, vocab]',['ufinal','params']);define('nextid','Sampled token ID','[1, 1]',['logits']);
+ function put(entity,loc,dtype,label,note='',shape){const key=[entity,loc,dtype].join('|');cells[key]={key,entity,loc,dtype,label:label||entities[entity].label,note,shape:shape||entities[entity].shape};return cells[key];}
+ function find(entity,loc,dtype){const a=Object.values(cells).find(c=>c.entity===entity&&c.loc===loc&&(!dtype||c.dtype===dtype));if(!a)throw new Error(`Missing input ${entity} at ${loc} (${dtype||'any dtype'}), operator ${stage?.id}`);return a;}
+ function remove(test){for(const [k,c]of Object.entries(cells))if(test(c))delete cells[k];}
+ function capture(){snapshot={version:++version,cells:JSON.parse(JSON.stringify(cells))};return snapshot;}
+ function begin(id,inputs,outputs,equation,explanation){
+  stage={id,title:id===0&&r.wb===16?'FP16 checkpoint preparation':id===2&&phase==='decode'?'Decode input and embedding':titles[id],goal:goals[id],inputs,outputs,equation,explanation,frames:[]};
+  stages.push(stage);stage.frames.push({kind:'Start',title:'Start of operator',summary:id===0?'Source parameters are ready for checkpoint preparation.':`The complete state is unchanged from the end of operator ${id}.`,why:'Retained buffers and on-chip tiles remain visible. No transfer or computation has occurred yet.',snapshot,before:snapshot,entities:inputs,unit:null,changes:[]});
+ }
+ function action(kind,title,summary,why,info,mutate){const before=snapshot;mutate?.();const after=mutate?capture():snapshot;
+  const changes=[];for(const [k,c]of Object.entries(after.cells)){const old=before.cells[k];if(!old)changes.push({type:'Added',before:null,after:c});else if(JSON.stringify(old)!==JSON.stringify(c))changes.push({type:'Updated',before:old,after:c});}
+  for(const [k,c]of Object.entries(before.cells))if(!after.cells[k])changes.push({type:'Released',before:c,after:null});
+  const frame={kind,title,summary,why,before,snapshot:after,changes,entities:[],...info};stage.frames.push(frame);events.push({stage:stage.id,frame:stage.frames.length-1,...frame});return frame;
+ }
+ function copy(entity,from,to,options={}){const c=find(entity,from,options.dtype),dtype=c.dtype;
+  action('Load',options.title||`Copy ${c.label} to ${locations[to]}`,options.summary||`${c.label} is copied from ${locations[from]} to ${locations[to]}; the source remains available.`,options.why||'A read creates a working copy. It does not move or delete the source buffer.',{from,to,entities:[entity],dtype},()=>put(entity,to,dtype,options.label||c.label,options.note||'Working tile / copy',c.shape));
+ }
+ function gpuLoad(entity,options={}){const c=find(entity,options.from||'activations',options.dtype);copy(entity,c.loc,'l2',{...options,title:`Load ${c.label} through L2`,summary:`Read a tile of ${c.label} (${c.dtype}) from ${locations[c.loc]}.`,why:'This diagram follows an illustrative cache-miss path. L2 is hardware-managed; a cache hit can reuse a tile already on-chip.',note:'Illustrative L2 tile; replacement is not simulated'});
+  if(options.shared){copy(entity,'l2','shared',{label:options.label||c.label,note:'Example GEMM shared-memory staging',why:'This tiled GEMM example stages data in Shared Memory. Other kernels can use a different path.'});copy(entity,'shared','registers',{label:options.label||c.label});}
+  else copy(entity,'l2','registers',{label:options.label||c.label});
+ }
+ function convert(entity,toDtype,title,why){const c=find(entity,'registers'),isKV=['kr','v'].includes(entity)&&['INT4','INT8'].includes(toDtype);action('Convert',title,`${c.label}: ${c.dtype} → ${toDtype} in Registers. Other copies keep their original dtype.`,why,{from:'registers',to:'registers',unit:'cuda',entities:[entity,...(isKV?['kvmeta']:[])],dtype:toDtype},()=>{remove(x=>x.entity===entity&&x.loc==='registers');put(entity,'registers',toDtype,c.label,'Converted working tile',c.shape);if(isKV)put('kvmeta','registers','META',undefined,'Parameters for new K/V entries');});}
+ function compute(title,summary,why,unit,inputs,outputs,dtype){for(const id of inputs)find(id,'registers');action('Compute',title,summary,why,{unit,to:'registers',entities:[...inputs,...outputs],dtype},()=>{for(const id of outputs)put(id,'registers',dtype,undefined,'Computed output tile');});}
+ function store(entity,to='activations',options={}){const c=find(entity,'registers',options.dtype);action('Store',options.title||`Store ${c.label}`,options.summary||`Write ${c.label} (${c.dtype}) to ${locations[to]}.`,options.why||'This reference execution materializes this activation boundary. Kernel fusion may keep the same dependency on-chip instead.',{from:'registers',to,entities:[entity],dtype:c.dtype},()=>put(entity,to,c.dtype,options.label||c.label,options.note||'Materialized reference buffer',options.shape||c.shape));}
+ function release(consumed=[],keep=[]){action('Release','Release temporary copies','Release this operator’s working tiles and consumed activation buffers. Retained weights, residuals and KV caches are preserved.','This is a logical lifetime boundary. Physical register allocation and cache replacement are not simulated.',{entities:consumed,unit:null},()=>remove(c=>(['l2','shared','registers','cpu'].includes(c.loc)&&!keep.includes(c.entity))||(c.loc==='activations'&&consumed.includes(c.entity))));}
+ function end(next){stage.frames.push({kind:'End',title:'End of operator',summary:next?`The output is ready for ${next}.`:'The forward pass is complete. A continuing request begins another Decode pass.',why:'Advancing to the next operator changes the label only. Its Start uses this exact snapshot.',snapshot,before:snapshot,entities:stage.outputs,changes:[],unit:null});stage.start=stage.frames[0].snapshot;stage.end=snapshot;}
+ function linear(id,input,outputs,weightLabel,equation){
+  begin(id,[input,'W'],outputs,equation,'Linear inputs and outputs use FP16 boundaries in this reference execution. Weight quantization affects the stored parameters; A8 is a temporary GEMM input representation.');
+  gpuLoad('W',{from:'weights',shared:true,label:weightLabel+' tile'});gpuLoad(input,{shared:true});
+  if(r.wb<16){action('Load','Load weight quantization parameters','Read the scales and zero-points required by this weight tile.','Quantized codes alone do not specify real-valued weights.',{from:'weights',to:'registers',entities:['wmeta'],dtype:'META'},()=>put('wmeta','registers','META','Weight scales / zero-points','Format-dependent tile metadata'));}
+  if(r.wb===4)convert('W',r.ab===8?'INT8':'FP16',r.ab===8?'Progressive group dequantization: W4 → W8':'Dequantize the weight tile: W4 → FP16',r.ab===8?'QServe reconstructs the intermediate INT8 weight tile. Outer scales are applied in the epilogue.':'Apply group scales and zero-points to the tile. The full FP16 weight matrix is not created in GPU DRAM.');
+  if(r.ab===8){action('Convert','Quantize the activation tile: A16 → A8','Compute a per-token activation scale and quantize the GEMM input to INT8.','The stored activation boundary stays FP16. Only the working GEMM operand changes dtype.',{from:'registers',to:'registers',unit:'cuda',entities:[input,'ascale'],dtype:'INT8'},()=>{const c=find(input,'registers');remove(x=>x.entity===input&&x.loc==='registers');put(input,'registers','INT8',c.label,'Per-token quantized GEMM operand',c.shape);put('ascale','registers','META',undefined,'For the current GEMM input');});}
+  compute(`${r.ab===8?'INT8':'FP16'} GEMM → ${r.acc} accumulator`,`${weightLabel}: ${r.operand} with ${r.acc} accumulation.`,outputs.length>1?'The projections are grouped here as one logical stage; each projection has its own learned matrix.':'Tensor Cores are the illustrative GEMM execution unit; kernel implementation and hardware support still apply.','tensor',[input,'W'],outputs,r.acc);
+  for(const out of outputs){convert(out,'FP16',`Epilogue: ${entities[out].label} → FP16`,r.acc==='INT32'?'Rescale the INT32 accumulator with the activation and weight scales, then cast the output to FP16.':'Cast the FP32 accumulator to the FP16 activation boundary.');store(out);}
+  release([input]);end(id===4?'RoPE':id===10?'the attention residual add':id===13?'SiLU and elementwise product':'the FFN residual add');
+ }
+ // Initial conditions precede the first frame and remain visible until consumed.
+ put('sourceW','host','FP16');put('params','host','FP16');if(phase==='prefill')put('prompt','host','META');snapshot={version:0,cells:JSON.parse(JSON.stringify(cells))};
+ begin(0,['sourceW','params'],['W','params'],r.wb===16?'Wcheckpoint = W16':'Wcheckpoint = pack(quantize(W16))','Offline preparation is illustrated on the CPU. Real tools can perform conversion on a GPU. Quantization parameters are required for low-bit reconstruction.');
+ copy('sourceW','host','cpu');
+ action('Compute',r.wb===16?'Prepare FP16 weights':'Quantize and pack the linear weights',r.wb===16?'Keep the linear weights in FP16.':`Create ${W} linear-weight codes and the associated quantization parameters.`,'This happens before runtime inference; it is not repeated for every token.',{unit:'cpu',to:'host',entities:['sourceW','W',...(r.wb<16?['wmeta']:[])],dtype:W},()=>{put('W','host',W);if(r.wb<16)put('wmeta','host','META');});
+ for(const e of ['W','params',...(r.wb<16?['wmeta']:[])])copy(e,'host','ssd',{title:`Serialize ${entities[e].label} to SSD`,why:'The checkpoint retains its storage dtype and required metadata.'});
+ action('Release','Finish checkpoint preparation','Release offline source and host staging buffers. The serialized checkpoint remains on SSD.','The inference runtime can load this checkpoint later.',{entities:['sourceW','W','params']},()=>remove(c=>['host','cpu'].includes(c.loc)&&c.entity!=='prompt'));end('model loading');
+ begin(1,['W','params'],['W','params','kc','vc'],'SSD → CPU DRAM → GPU DRAM','A host-staging transfer path is shown. Weights are loaded once per runtime, then reused across requests and tokens. The request state below is an explicit initial condition.');
+ for(const e of ['W','params',...(r.wb<16?['wmeta']:[])]){copy(e,'ssd','host');copy(e,'host','weights',{title:`Upload ${entities[e].label} to GPU DRAM`,why:'The runtime retains this GPU parameter buffer; it is not rewritten during forward inference.'});}
+ action('Initialize','Initialize request state',phase==='prefill'?'Create empty per-layer KV buffers. No past token has been cached.':'Resume a request whose previous forward has already cached eight tokens. Its sampled input ID is ready on the GPU.','This is an explicit request initial condition, not a cache generated by model loading. A real Decode call uses state produced by previous forward passes.',{to:'kv',entities:['kc','vc','kvrest',...(phase==='decode'?['ids']:[])],dtype:KV},()=>{put('kc','kv',KV,undefined,`S = ${S} tokens`,`[1, 8, ${S}, 128]`);put('vc','kv',KV,undefined,`S = ${S} tokens`,`[1, 8, ${S}, 128]`);put('kvrest','kv',KV,undefined,`Each layer: S = ${S}`);if(r.kb<16)put('kvmeta','kv','META',undefined,'KV format metadata');if(phase==='decode')put('ids','activations','INT32',undefined,'Input from previous forward');});
+ action('Release','Release host staging buffers','The model is resident in GPU DRAM. SSD retains the checkpoint.','Request KV buffers are independent of model parameters.',{entities:['W','params']},()=>remove(c=>c.loc==='host'&&c.entity!=='prompt'));end('input embedding');
+ begin(2,phase==='prefill'?['prompt','params']:['ids','params'],['x'],'X = Embedding(IDs)','Embedding is a table lookup, not a GEMM. The example uses 32 query heads, 8 KV heads, head dimension 128 and model width 4096.');
+ if(phase==='prefill'){
+  action('Compute','Tokenize the prompt','The CPU tokenizer produces integer token IDs.','Tokenization applies to the prompt. Subsequent Decode forwards consume a previously sampled ID.',{unit:'cpu',from:'host',to:'host',entities:['prompt','ids'],dtype:'INT32'},()=>put('ids','host','INT32'));
+  copy('ids','host','activations',{title:'Upload token IDs to the GPU'});
+ }
+ gpuLoad('ids');gpuLoad('params',{from:'weights',label:'Selected embedding rows'});
+ compute('Gather embedding rows','Look up the FP16 embedding row for each input token ID.','Only the selected rows are needed; the full embedding table remains in GPU DRAM.','cuda',['ids','params'],['x'],'FP16');store('x');release(['ids']);
+ action('Release','Release input-only host buffers','The input hidden states X are ready. Release prompt text and host token-ID copies from this logical trace.','The request’s hidden states now enter the Transformer layer.',{entities:['prompt','ids']},()=>remove(c=>c.loc==='host'&&['prompt','ids'].includes(c.entity)));end('Input RMSNorm');
+ function norm(id,input,output){begin(id,[input,'params'],[output,input],`${entities[output].label.split(' ')[0]} = RMSNorm(${input==='x'?'X':'R'})`,'Compute FP32 statistics, apply the norm parameter and return an FP16 tensor. The residual input remains live.');gpuLoad(input);gpuLoad('params',{from:'weights',label:'RMSNorm γ tile'});
+  compute('Compute RMSNorm with FP32 statistics','Reduce x² in FP32 and apply RMS normalization and γ.','The FP32 entry represents the reference arithmetic before the output cast; it is not a new FP32 residual stream.','cuda',[input,'params'],[output],'FP32');convert(output,'FP16','Cast normalized output to FP16','The original residual buffer is still FP16 and remains untouched.');store(output);release();end(id===3?'QKV projections':'FFN gate and up projections');}
+ norm(3,'x','u');linear(4,'u',['q','k','v'],'WQ / WK / WV','Q = U WQᵀ; K = U WKᵀ; V = U WVᵀ');
+ begin(5,['q','k','v'],['qr','kr','v'],'Q′ = RoPE(Q, position); K′ = RoPE(K, position)','RoPE changes Q and K. The V buffer is retained unchanged. FP16 labels describe tensor boundaries; intermediate arithmetic depends on the kernel.');gpuLoad('q');gpuLoad('k');
+ compute('Rotate Q and K','Apply RoPE to Q and K using their positions. V is not modified.','The rotated Q is used for this forward. The rotated K will be appended to the KV cache.','cuda',['q','k'],['qr','kr'],'FP16');store('qr');store('kr');release(['q','k']);end('KV cache append');
+ begin(6,['kr','v','kc','vc'],['kc','vc','qr'],`Kcache ← concat(Kpast, K′); Vcache ← concat(Vpast, V); S: ${S} → ${N}`,'The cache stores request-specific K/V for each layer. The query is kept as a temporary activation and is not appended.');gpuLoad('kr');gpuLoad('v');
+ if(r.kb<16){convert('kr',KV,`Quantize current K′: FP16 → ${KV}`,'Compute the KV format’s quantization parameters and pack the new entries. Existing cached entries keep their values.');convert('v',KV,`Quantize current V: FP16 → ${KV}`,'Only the current entries are quantized in this simplified uniform-cache example; some implementations retain a high-precision residual cache.');}
+ for(const [src,dst]of [['kr','kc'],['v','vc']])action('Store',`Append ${src==='kr'?'K′':'V'} to its cache`,`${entities[dst].label}: S = ${S} → ${N}; stored dtype ${KV}.`,'The past cache is retained; append writes only the new token positions.',{from:'registers',to:'kv',entities:[src,dst],dtype:KV},()=>{find(src,'registers',KV);put(dst,'kv',KV,undefined,`S = ${N} tokens; past entries preserved`,`[1, 8, ${N}, 128]`);});
+ if(r.kb<16)action('Store','Store KV quantization parameters','Retain the parameters needed to reconstruct the new K/V entries.','KV metadata consumes additional memory beyond the low-bit payload.',{from:'registers',to:'kv',entities:['kvmeta'],dtype:'META'},()=>put('kvmeta','kv','META',undefined,'Metadata includes current entries'));
+ release(['kr','v']);end('attention score computation');
+ begin(7,['qr','kc'],['score'],'scores = Q′ Kcacheᵀ / sqrt(128) + causal_mask','GQA shares 8 KV heads across 32 query heads. This and the following two stages show logical attention-tile dependencies; a fused attention kernel interleaves tiles and online softmax.');gpuLoad('qr');gpuLoad('kc',{from:'kv'});
+ if(r.kb<16){action('Load','Read K-cache quantization parameters','Load the metadata needed by this K tile.','The GPU cache codes remain compressed.',{from:'kv',to:'registers',entities:['kvmeta'],dtype:'META'},()=>put('kvmeta','registers','META'));convert('kc','FP16',`Dequantize K tile: ${KV} → FP16`,'The FP16 copy is a temporary attention operand; GPU DRAM still stores low-bit K.');}
+ compute('Compute and mask the score tile','Multiply FP16 Q′ by FP16 K and accumulate FP32 scores; apply scaling and the causal mask.','The dot-product execution unit depends on the attention kernel. This is not an assertion that every attention GEMM runs on Tensor Cores.','sm',['qr','kc'],['score'],'FP32');release(['qr'],['score']);end('Softmax with the same on-chip score tile');
+ begin(8,['score'],['prob'],'P = softmax(scores)','No transfer from GPU DRAM occurs at the start: the score tile is already in Registers. The diagram shows one logical tile dependency, not a complete FlashAttention schedule.');
+ compute('Compute softmax in FP32','Use max subtraction, exp, sum and normalization on the FP32 score tile.','Online attention kernels combine block statistics. A full probability matrix is not required in GPU DRAM.','cuda',['score'],['prob'],'FP32');convert('prob','FP16','Cast the probability operand to FP16','This reference floating-point PV path uses FP16 P and V operands with FP32 accumulation.');release([],['prob']);end('PV with the retained probability tile');
+ begin(9,['prob','vc'],['oh'],'Oheads = P Vcache; concatenate heads','The P tile remains in Registers from Softmax. Load only the required V tile; dequantize it when the cache is low-bit.');gpuLoad('vc',{from:'kv'});
+ if(r.kb<16){action('Load','Read V-cache quantization parameters','Load the metadata needed by this V tile.','K and V can have separate quantization parameters.',{from:'kv',to:'registers',entities:['kvmeta'],dtype:'META'},()=>put('kvmeta','registers','META'));convert('vc','FP16',`Dequantize V tile: ${KV} → FP16`,'The original V cache remains compressed in GPU DRAM.');}
+ compute('Compute PV with FP32 accumulation','Combine FP16 probabilities and FP16 V values into the attention output.','CUDA / Tensor Core mapping depends on the attention kernel; FP32 is the reference accumulation dtype.','sm',['prob','vc'],['oh'],'FP32');convert('oh','FP16','Cast the attention output to FP16','The concatenated output feeds the learned WO projection.');store('oh');release();end('attention output projection');
+ linear(10,'oh',['attn'],'WO','O = concat(Oheads) WOᵀ');
+ function residual(id,a,b,out,equation){begin(id,[a,b],[out],equation,'The preserved residual and the branch output are both FP16. Internal arithmetic may be wider; the output boundary is FP16.');gpuLoad(a);gpuLoad(b);compute('Add the residual and branch output',equation,'This is an elementwise operation, not a matrix reduction.','cuda',[a,b],[out],'FP16');store(out);release([a,b]);end(id===11?'Post-attention RMSNorm':'the next Transformer layer');}
+ residual(11,'x','attn','r','R = X + O');norm(12,'r','u2');linear(13,'u2',['gate','up'],'Wgate / Wup','G = U2 Wgateᵀ; Up = U2 Wupᵀ');
+ begin(14,['gate','up'],['f'],'F = SiLU(G) ⊙ Up','Both inputs are FP16 activation buffers. This operation uses no additional learned weight matrix.');gpuLoad('gate');gpuLoad('up');compute('Apply SiLU and the elementwise product','Create F = SiLU(G) ⊙ Up with an FP16 output boundary.','For an A8 configuration, F is quantized later at the input to the down-projection GEMM.','cuda',['gate','up'],['f'],'FP16');store('f');release(['gate','up']);end('FFN down projection');
+ linear(15,'f',['down'],'Wdown','D = F Wdownᵀ');residual(16,'r','down','xnext','Xnext = R + D');
+ begin(17,['xnext','W','kvrest'],['xlast','kvrest'],'Xlast = LayerL(… Layer2(Xnext) …)','This is an explicitly collapsed layer-stack stage. Each remaining layer repeats operators 4–17 with its own parameters and cache; the internal transfers are summarized here.');
+ action('Repeat','Execute the remaining layer stack','Pass Xnext through layers 2 … L; append each layer’s own K/V entries.','This summary expands to the same layer operator pattern already shown. It does not share layer-1 K/V with other layers.',{unit:'sm',entities:['xnext','xlast','kvrest'],dtype:'FP16'},()=>{find('xnext','activations');put('xlast','activations','FP16');put('kvrest','kv',KV,undefined,`Each remaining layer: S = ${S} → ${N}`);});release(['xnext']);end('the final norm and LM head');
+ begin(18,['xlast','params'],['nextid'],'h = RMSNorm(last_position(Xlast)); logits = h Wheadᵀ; ID = sample(logits)','Only the last position is used to predict the next token here, including at the end of Prefill. The LM head and final norm remain FP16.');gpuLoad('xlast',{label:'Last-position hidden-state tile'});gpuLoad('params',{from:'weights',shared:true,label:'Final norm / LM-head tile'});
+ compute('Apply the final RMSNorm','Normalize the last-position hidden state using FP32 statistics.','The FP16 output is the input to the LM-head GEMM.','cuda',['xlast','params'],['ufinal'],'FP32');convert('ufinal','FP16','Cast the final normalized input to FP16','The LM-head weights and operand are FP16 in this model.');
+ compute('Compute vocabulary logits','Apply the FP16 LM-head projection with FP32 accumulation.','The final projection covers the vocabulary; it is kept high-precision in every configuration shown here.','tensor',['ufinal','params'],['logits'],'FP32');convert('logits','FP16','Cast the logit boundary to FP16','The sampling transform can promote logits again for stable FP32 arithmetic.');store('logits');
+ convert('logits','FP32','Promote logits for sampling','Apply temperature, filtering or normalization in floating point, depending on the sampling policy.');compute('Select the next token ID','The sampling policy selects one INT32 token ID.','The ID is a discrete index. INT32 does not describe the precision of the probability calculation.','cuda',['logits'],['nextid'],'INT32');store('nextid');release(['xlast','logits']);end('the autoregressive control step');
+ begin(19,['nextid','kc','vc','kvrest','W'],['nextid','kc','vc','kvrest','W'],'next ID → embedding → layers → next ID','At this boundary all layer caches include the current forward. Ordinary Decode adds one new token per sequence per forward. The next call is outside this finite trace.');
+ action('Control','Check the stopping condition','If EOS or the length limit is reached, stop. Otherwise use the sampled ID as the next Decode input.','Weights remain resident. Per-request KV caches are reused, and the next append increases S again.',{unit:'cpu',entities:['nextid','kc','vc','kvrest','W']},null);end();
+ return{recipe:r.id,phase,T,S,N,W,KV,entities,stages,events,locations};
+}
+function history(model,entity){return model.events.filter(e=>e.entities.includes(entity)||e.changes.some(c=>(c.after||c.before).entity===entity)).map(e=>({...e,changes:e.changes.filter(c=>(c.after||c.before).entity===entity)}));}
+root.QuantExecution={build,history,locations,titles,goals};
+if(typeof module!=='undefined')module.exports=root.QuantExecution;
+})(typeof globalThis!=='undefined'?globalThis:this);
