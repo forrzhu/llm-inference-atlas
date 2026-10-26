@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="LLM inference operators, tensor dtypes, GPU memory hierarchy and quantization. An interactive reference model.">
-<meta name="theme-color" content="#eef3f9"><meta name="quantization-lab-build" content="20261026c">
+<meta name="theme-color" content="#eef3f9"><meta name="quantization-lab-build" content="20261026d">
 <title>Quantization Lab · LLM Inference and Quantization</title>
-<link rel="stylesheet" href="style.56a35861df.css">
-<script src="model.bfa76250a1.js" defer></script><script src="hardware-model.46f86d7c91.js" defer></script><script src="hardware-view.cee8b936ba.js" defer></script><script src="app.cb50591636.js" defer></script>
+<link rel="stylesheet" href="style.207f2f65e6.css">
+<script src="model.bfa76250a1.js" defer></script><script src="hardware-model.8c23a4d1c1.js" defer></script><script src="hardware-view.50ad1fdf4e.js" defer></script><script src="app.cc4535b22b.js" defer></script>
 </head>
 <body>
 <a href="#main" class="skip">跳到内容</a>
@@ -25,7 +25,7 @@
 <div class="hardware-heading"><div><h2 id="hardware-heading">Hardware Model</h2><div id="hardware-operator"></div></div><span id="hardware-context" class="mono"></span></div>
 <div class="precision-legend" id="precision-legend" aria-label="Dtype legend"></div>
 <div class="hardware-scroll"><div id="hardware-map"></div></div>
-<p class="hardware-caption">颜色表示 dtype；分区表示 memory location。箭头表示数据方向；虚线 Write* 表示可被 kernel fusion 省略的 DRAM materialization。图中 buffer / tile 为逻辑状态，不表示实际数值或硬件时序。KV Cache 是 request buffer；L2 Cache 是 hardware cache。</p>
+<p class="hardware-caption">彩色 badge 表示 dtype；分区表示 memory location；加粗边框表示当前访问。箭头表示数据方向；虚线 Write* 表示可被 kernel fusion 省略的 DRAM materialization。图中 buffer / tile 为逻辑状态，不表示实际数值或硬件时序。KV Cache 是 request buffer；L2 Cache 是 hardware cache。</p>
 <div id="hardware-events" aria-live="polite"></div>
 </section>
 <section class="inspector" aria-label="Operator details"><div id="detail"></div></section>

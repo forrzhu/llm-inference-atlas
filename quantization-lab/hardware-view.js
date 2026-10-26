@@ -3,7 +3,7 @@
 const H=root.QuantHardware||(typeof require==='function'?require('./hardware-model.js'):null);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const locNames={ssd:'Host / SSD',host:'Host / DRAM',cpu:'Host / CPU',weights:'GPU DRAM / Weights',activations:'GPU DRAM / Activations',kv:'GPU DRAM / KV Cache',l2:'GPU die / L2 Cache',shared:'SM / Shared Memory',registers:'SM / Registers',cuda:'SM / CUDA Cores',tensor:'SM / Tensor Cores',sm:'SM / Attention or layer kernel'};
-const positions={ssd:[32,44,245,96,'SSD'],host:[318,44,330,96,'CPU DRAM'],cpu:[690,44,395,96,'CPU'],weights:[49,263,240,142,'Model weights'],activations:[49,432,240,145,'Activations / residual'],kv:[49,604,240,170,'KV cache · layer ℓ'],l2:[354,263,710,84,'L2 Cache'],shared:[372,415,262,119,'Shared Memory'],registers:[658,415,388,153,'Registers'],cuda:[372,629,315,118,'CUDA Cores'],tensor:[729,629,317,118,'Tensor Cores']};
+const positions={ssd:[32,44,245,96,'SSD'],host:[318,44,330,96,'CPU DRAM'],cpu:[690,44,395,96,'CPU'],weights:[49,263,240,142,'Model weights'],activations:[49,432,240,145,'Activations'],kv:[49,604,240,170,'KV cache · layer ℓ'],l2:[354,263,710,84,'L2 Cache'],shared:[372,415,262,119,'Shared Memory'],registers:[658,415,388,153,'Registers'],cuda:[372,629,315,118,'CUDA Cores'],tensor:[729,629,317,118,'Tensor Cores']};
 const paths={
  'ssd-host':'M277 92 H314','host-ssd':'M318 92 H281','cpu-host':'M690 92 H652',
  'host-weights':'M483 140 V161 H312 V255 H169 V259','host-input':'M511 140 V165 H323 V424 H169 V428',

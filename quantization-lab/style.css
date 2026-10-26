@@ -14,3 +14,5 @@
 
 
 #memory-results .bar-w{background:var(--bar-color,#2459aa)}#memory-results .bar-kv{background:repeating-linear-gradient(135deg,#ffffff66 0 3px,transparent 3px 6px),var(--bar-color,#2459aa)}.memory-legend{display:flex;align-items:center;gap:20px;font-size:11px;color:var(--muted);flex-wrap:wrap;margin:16px 0}
+
+.hardware-panel{overflow:clip}.hardware-panel>.transport{position:sticky;top:0;z-index:3;background:#f4f7fc;border-bottom:1px solid var(--line)}

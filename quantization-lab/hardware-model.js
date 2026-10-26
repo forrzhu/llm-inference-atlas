@@ -25,7 +25,7 @@ function getTrace(r,phase,id){
  const gpuInput=(label)=>{read('activations',[item(label,'FP16','read')]);set('l2','read',[item('Activation tile','FP16','read')],'Cache hit / fill depends on locality');edge('read-a','FP16');edge('l2-reg','FP16');};
  const output=(label)=>{const input=nodes.activations.items.filter(x=>x.role==='read').slice(0,1);set('activations','optional-write',[...input,item(label,'FP16','write')],'Read → write*; fusion may retain output on-chip');event('Write*','activations',label,'FP16','Optional materialization');edge('write-a','FP16',true);};
  const linear=(name,out)=>{
-  read('weights',[item(name,W,'read'),item('Other parameters','FP16')]);
+  read('weights',[item(name,W,'read'),item('Embedding / γ / head','FP16'),...(r.wb<16?[item('Scales / zero-points','META')]:[])]);
   read('activations',[item('GEMM input','FP16','read')]);
   set('l2','read',[item('W tile',W,'read'),item('A tile','FP16','read')],'Illustrative global-memory read path');
   set('shared','staging',[item('W tile',W),item('A tile','FP16')],'Example tiled GEMM staging');
@@ -36,7 +36,7 @@ function getTrace(r,phase,id){
   event('Read','weights',name,W);event('Read','activations','GEMM input','FP16');
   if(r.wb===4)event('Convert','registers',r.id==='qserve'?'W4 → W8':'W4 → W16',r.id==='qserve'?'INT8':'FP16',r.id==='qserve'?'Progressive group dequantization':'Group scale / zero-point');
   if(r.ab===8)event('Convert','registers','A16 → A8','INT8','Per-token activation scale');
-  event('Compute','tensor','A × W → C',r.acc);output(out);
+  event('Compute','tensor','A × W → C',r.acc);event('Convert','cuda',r.ab===8?'INT32 accumulator × scales → FP16':'FP32 accumulator → FP16','FP16','GEMM epilogue');output(out);
   edge('read-w',W);edge('read-a','FP16');edge('l2-shared',W);edge('shared-reg',W);edge('reg-tensor',r.ab===8?'INT8':'FP16');edge('reg-cuda','FP16');
  };
  switch(id){
@@ -84,7 +84,7 @@ function getTrace(r,phase,id){
   set('cuda','compute',[item(k?'Score / mask':'Output conversion','FP32','write')],r.kb<16?'KV dequantization + scalar operations':k?'Score scaling / causal mask':'Output conversion');
   set('tensor','dependent',[item(k?'Q × Kᵀ':'P × V','FP16'),item('Accumulator','FP32')],'Dot-product unit is kernel-dependent');set('sm','attention',[],'Attention kernel: CUDA / Tensor mapping varies');
   event('Read','kv',label,KV);if(k)event('Read','activations','Q′','FP16');else event('Read','registers','Probability tile P','FP16','Retained from fused softmax');
-  if(r.kb<16)event('Convert','registers',`${k?'K':'V'}: ${KV} → FP16`,'FP16');event('Compute','sm',k?'QKᵀ / sqrt(d) + mask':'P × V','FP32','Execution-unit mapping depends on attention kernel');
+  if(r.kb<16)event('Convert','registers',`${k?'K':'V'}: ${KV} → FP16`,'FP16');event('Compute','sm',k?'QKᵀ → FP32 scores; scale / mask':'P × V → FP32 accumulator','FP32','Execution-unit mapping depends on attention kernel');
   edge('read-kv',KV);if(k)edge('read-a','FP16');edge('l2-reg',KV);edge('reg-cuda','FP32');
   if(!k)output('Attention output O');break;
  }
@@ -109,8 +109,8 @@ function getTrace(r,phase,id){
   set('l2','read',[item('LM head tile','FP16'),item('Hidden-state tile','FP16')],'FP16 LM head in this model');set('shared','staging',[item('LM head / A tile','FP16')],'Example tiled GEMM');
   set('registers','compute',[item('LM-head accumulator','FP32','write'),item('Logit tile','FP16','write'),item('Sampling computation','FP32','write'),item('Sampled token ID','INT32','write')],'Final norm → LM head → sampling');
   set('cuda','compute',[item('Norm / sampling','FP32'),item('Token ID','INT32','write')],'Final RMSNorm / sampling');set('tensor','compute',[item('Head operands','FP16'),item('Accumulator','FP32','write')],'FP16 LM-head GEMM');set('sm','compute',[],'Final norm, LM head and sampling');
-  set('activations','optional-write',[item('Logits','FP16','write'),item('Next token ID','INT32','write')],'ID location / materialization depends on runtime');
-  event('Read','weights','LM head / γ','FP16');event('Compute','tensor','LM head GEMM','FP32');event('Compute','cuda','Sampling transforms','FP32');event('Write','registers','Next token ID','INT32');event('Write*','activations','Logits / sampled token ID','FP16','ID uses INT32; materialization depends on runtime');
+  set('activations','optional-write',[item('Last-position input','FP16','read'),item('Logits','FP16','write'),item('Next token ID','INT32','write')],'ID location / materialization depends on runtime');
+  event('Read','weights','LM head / γ','FP16');event('Compute','tensor','LM head GEMM','FP32');event('Compute','cuda','Sampling transforms','FP32');event('Write','registers','Next token ID','INT32');event('Write*','activations','Logits','FP16','Optional materialization');event('Write*','activations','Sampled token ID','INT32','Location depends on runtime');
   edge('read-w','FP16');edge('read-a','FP16');edge('l2-shared','FP16');edge('shared-reg','FP16');edge('reg-tensor','FP16');edge('reg-cuda','FP32');edge('write-a','INT32',true);break;
  case 19:
   set('cpu','control',[],'EOS / length check; schedule next forward');set('activations','held',[item('Sampled token ID','INT32')],'Next forward: T=1');set('kv','held',[item('K cache',KV),item('V cache',KV)],`Retained · S=${n}; next append increases S`);set('weights','held',[item('Resident linear W',W),item('Embedding / norm / head','FP16')],'No checkpoint reload per token');
