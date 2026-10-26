@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="LLM inference operators, tensor dtypes, GPU memory hierarchy and quantization. An interactive reference model.">
-<meta name="theme-color" content="#eef3f9"><meta name="quantization-lab-build" content="20261026g">
+<meta name="theme-color" content="#eef3f9"><meta name="quantization-lab-build" content="20261026h">
 <title>Quantization Lab · LLM Inference and Quantization</title>
-<link rel="stylesheet" href="style.10276018dd.css">
-<script src="model.ba1b070265.js" defer></script><script src="hardware-model.b4c971d85c.js" defer></script><script src="hardware-view.50ad1fdf4e.js" defer></script><script src="execution-model.ee287ce2a7.js" defer></script><script src="execution-view.7167fc9617.js" defer></script><script src="app.353971e8ae.js" defer></script>
+<link rel="stylesheet" href="style.25f3005abe.css">
+<script src="model.ba1b070265.js" defer></script><script src="hardware-model.b4c971d85c.js" defer></script><script src="hardware-view.50ad1fdf4e.js" defer></script><script src="execution-model.ee287ce2a7.js" defer></script><script src="motion-view.9395a87475.js" defer></script><script src="execution-view.9f3a48d24e.js" defer></script><script src="app.24d96edc46.js" defer></script>
 </head>
 <body>
 <a href="#main" class="skip">Skip to content</a>
-<header class="top"><a class="brand" href="index.html?v=20261026g" aria-label="Quantization Lab"><span class="brand-icon" aria-hidden="true">▥</span><span>Quantization Lab<small>Tensor dtypes · GPU memory · Compute</small></span></a><div class="top-actions"><span class="check-tag">Reference execution model</span><button id="share" class="button small">Copy view link</button></div></header>
+<header class="top"><a class="brand" href="index.html?v=20261026h" aria-label="Quantization Lab"><span class="brand-icon" aria-hidden="true">▥</span><span>Quantization Lab<small>Tensor dtypes · GPU memory · Compute</small></span></a><div class="top-actions"><span class="check-tag">Reference execution model</span><button id="share" class="button small">Copy view link</button></div></header>
 <main id="main">
 <section class="intro"><h1>LLM Inference and Quantization</h1><p>Inspect tensor locations and precision across one forward pass. Select an operator, advance one action at a time, or click a tensor to inspect its lifecycle.</p></section>
 <nav class="tabs" role="tablist" aria-label="Sections"><button role="tab" data-tab="trace" aria-selected="true">Inference Overview</button><button role="tab" data-tab="gemm">GEMM Precision</button><button role="tab" data-tab="numbers">Quantization</button><button role="tab" data-tab="memory">Memory Usage</button><button role="tab" data-tab="sources">References &amp; Skills</button></nav>
@@ -21,16 +21,17 @@
 <aside class="flow-shell"><div class="flow-header"><h2>Operator Sequence</h2><span>20 operators / grouped stages</span></div><div class="flow" id="flow"></div></aside>
 <div class="overview-main">
 <section class="hardware-panel" aria-labelledby="hardware-heading">
-<div class="transport"><button id="prev" aria-label="Previous action">←</button><button id="play" aria-pressed="false">Play</button><button id="next" aria-label="Next action">Next action →</button><button id="reset" class="restart">Reset</button><span id="progress"></span><span id="transport-current" class="transport-current"></span></div>
+<div class="transport"><button id="prev" aria-label="Previous action">←</button><button id="play" aria-pressed="false">Play</button><button id="next" aria-label="Next action">Next action →</button><button id="replay" aria-label="Replay action" title="Replay action animation"></button><button id="reset" class="restart">Reset</button><span id="progress"></span><span id="transport-current" class="transport-current"></span></div>
 <div class="operator-heading"><div class="operator-number" id="operator-number"></div><h2 id="hardware-heading"></h2><p id="operator-goal"></p><div class="operator-nav"><button id="prev-operator">← Previous operator</button><button id="next-operator">Next operator →</button></div></div>
+<section id="operator-dataflow" class="operator-dataflow" aria-label="Operator dataflow"></section>
 <div class="action-timeline" id="action-timeline" aria-label="Action timeline"></div>
 <section class="action-explanation" aria-live="polite"><div class="action-label"><span id="action-kind"></span><span id="snapshot-id" class="mono"></span></div><h3 id="action-title"></h3><p id="action-summary"></p><p id="action-why"></p><div class="action-route" id="action-route"></div></section>
 <div class="continuity-note" id="continuity-note"></div>
 <div class="hardware-toolbar"><div><strong>Hardware model</strong><span id="hardware-context" class="mono"></span></div><div class="snapshot-toggle" aria-label="Displayed snapshot"><button id="show-before" aria-pressed="false">Before action</button><button id="show-after" aria-pressed="true">After action</button></div></div>
 <div class="precision-legend" id="precision-legend" aria-label="Dtype legend"></div>
-<div class="map-instruction"><span><i class="source-symbol"></i> Source</span><span><i class="destination-symbol"></i> Destination / updated</span><span>Click any tensor to inspect it</span></div>
+<div class="map-instruction"><span><i class="source-symbol"></i> Source</span><span><i class="destination-symbol"></i> Destination / updated</span><div class="map-controls"><button id="routes-toggle" aria-pressed="false">Operator routes</button><button id="animation-toggle" aria-pressed="true">Animation on</button></div></div>
 <div class="hardware-scroll"><div id="hardware-map"></div></div>
-<p class="hardware-caption">This reference execution materializes FP16 activation boundaries, except the retained attention score and probability tiles. Fusion may remove these stores. The model shows logical tiles and dependencies, not measured hardware timing. L2 is hardware-managed; L1, cache replacement and physical register allocation are abstracted. KV cache is a request buffer; L2 cache is hardware cache.</p>
+<p class="hardware-caption">This reference execution materializes FP16 activation boundaries, except the retained attention score and probability tiles. Fusion may remove these stores. Moving dots show data direction; animation speed does not represent hardware timing. Light paths show operator routes at Start / End or when enabled. The model shows logical tiles and dependencies. L2 is hardware-managed; L1, cache replacement and physical register allocation are abstracted. KV cache is a request buffer; L2 cache is hardware cache.</p>
 <details class="state-details" open><summary>State changes for this action</summary><div id="state-changes"></div></details>
 <div class="handoff" id="handoff"></div>
 </section>

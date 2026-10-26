@@ -1,16 +1,16 @@
 (function(){
 'use strict';
-const M=QuantModel,H=QuantHardware,V=QuantHardwareView,E=QuantExecution,X=QuantExecutionView,$=id=>document.getElementById(id),qs=new URLSearchParams(location.search);
+const M=QuantModel,H=QuantHardware,V=QuantHardwareView,E=QuantExecution,X=QuantExecutionView,A=QuantMotion,$=id=>document.getElementById(id),qs=new URLSearchParams(location.search);
 const names={fp16:'FP16',w4:'W4A16 · Weight-only',w8:'W8A8',qserve:'QServe · W4A8KV4'};
 const numberParam=(name,fallback,max)=>{const n=Number(qs.get(name));return qs.has(name)&&Number.isFinite(n)?Math.min(max,Math.max(0,Math.floor(n))):fallback;};
-const state={recipe:Object.hasOwn(M.recipes,qs.get('recipe'))?qs.get('recipe'):'w4',phase:qs.get('phase')==='decode'?'decode':'prefill',step:numberParam('step',2,19),action:numberParam('action',0,100),tab:['trace','gemm','numbers','memory','sources'].includes(qs.get('tab'))?qs.get('tab'):'trace',side:qs.get('snapshot')==='before'?'before':'after',selected:null};
+const state={recipe:Object.hasOwn(M.recipes,qs.get('recipe'))?qs.get('recipe'):'w4',phase:qs.get('phase')==='decode'?'decode':'prefill',step:numberParam('step',2,19),action:numberParam('action',0,100),tab:['trace','gemm','numbers','memory','sources'].includes(qs.get('tab'))?qs.get('tab'):'trace',side:qs.get('snapshot')==='before'?'before':'after',selected:null,routes:qs.get('routes')==='1',animate:qs.get('motion')!=='off'&&!matchMedia('(prefers-reduced-motion: reduce)').matches};
 let model=E.build(state.recipe,state.phase),timer=null,drawRequest=null;
 const escape=X.esc,typed=V.rich;
 const bytes=n=>n>=2**30?(n/2**30).toFixed(2)+' GiB':n>=2**20?(n/2**20).toFixed(1)+' MiB':(n/1024).toFixed(1)+' KiB';
 const sources=ids=>ids.map(id=>{const r=M.references.find(r=>r.id===id);return r?`<a href="${r.url}" target="_blank" rel="noopener">${escape(r.name.split(' · ')[0])} ↗</a>`:'';}).join('');
 const typeFromBits=bits=>bits===4?'INT4':bits===8?'INT8':'FP16';
 const current=()=>{const stage=model.stages[state.step];state.action=Math.min(stage.frames.length-1,state.action);return{stage,frame:stage.frames[state.action]};};
-function persist(){const p=new URLSearchParams({v:'20261026g',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
+function persist(){const p=new URLSearchParams({v:'20261026h',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab,routes:state.routes?'1':'0',motion:state.animate?'on':'off'});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
 function stop(){clearInterval(timer);timer=null;$('play').textContent='Play';$('play').setAttribute('aria-pressed','false');}
 function renderConfig(){
  const r=M.recipes[state.recipe],desc={fp16:'FP16 operands · FP32 accumulator',w4:'INT4 storage · FP16 GEMM',w8:'INT8 GEMM · INT32 accumulator',qserve:'INT4 → INT8 · INT8 GEMM'};
@@ -27,20 +27,26 @@ function renderFlow(){
  }).join('');
 }
 function drawTransfer(){
- const {frame}=current(),svg=$('transfer-overlay'),board=$('hardware-board');if(!svg||!board)return;
- svg.innerHTML='';if(!frame.from||!frame.to||frame.from===frame.to)return;
- const source=board.querySelector(`[data-memory="${frame.from}"]`),dest=board.querySelector(`[data-memory="${frame.to}"]`);if(!source||!dest)return;
- const b=board.getBoundingClientRect(),a=source.getBoundingClientRect(),c=dest.getBoundingClientRect(),scale=board.offsetWidth/b.width;
- const rect=r=>({left:(r.left-b.left)*scale,right:(r.right-b.left)*scale,top:(r.top-b.top)*scale,bottom:(r.bottom-b.top)*scale,width:r.width*scale,height:r.height*scale});
- const sr=rect(a),dr=rect(c);let path;
- if(sr.right<dr.left){const x=(sr.right+dr.left)/2;path=`M${sr.right+2},${sr.top+sr.height/2} H${x} V${dr.top+dr.height/2} H${dr.left-3}`;}
- else if(dr.right<sr.left){const x=(dr.right+sr.left)/2;path=`M${sr.left-2},${sr.top+sr.height/2} H${x} V${dr.top+dr.height/2} H${dr.right+3}`;}
- else {const below=dr.top>sr.top,sy=below?sr.bottom+2:sr.top-2,dy=below?dr.top-3:dr.bottom+3,sx=sr.left+sr.width*.5,dx=dr.left+dr.width*.5,my=(sy+dy)/2;path=`M${sx},${sy} V${my} H${dx} V${dy}`;}
- const color=(H.DT[frame.dtype]||H.DT.META).ink;svg.setAttribute('viewBox',`0 0 ${board.offsetWidth} ${board.offsetHeight}`);svg.innerHTML=`<defs><marker id="active-transfer-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="${color}" stroke-width="1.7"/></marker></defs><path d="${path}" class="transfer-underlay"/><path d="${path}" stroke="${color}" marker-end="url(#active-transfer-arrow)" class="active-transfer"/>`;
+ const {stage,frame}=current(),svg=$('transfer-overlay'),board=$('hardware-board');if(!svg||!board)return;
+ const active=A.connections(frame),context=state.routes||!active.length?A.routes(stage):[],b=board.getBoundingClientRect(),scale=board.offsetWidth/b.width;
+ const getRect=id=>{const el=board.querySelector(`[data-memory="${id}"]`);if(!el)return null;const r=el.getBoundingClientRect();return{left:(r.left-b.left)*scale,right:(r.right-b.left)*scale,top:(r.top-b.top)*scale,bottom:(r.bottom-b.top)*scale,width:r.width*scale,height:r.height*scale};};
+ function path(c){const sr=getRect(c.from),dr=getRect(c.to);if(!sr||!dr)return null;const shift=(c.lane||0)*13;
+  if(sr.right<dr.left){const x=(sr.right+dr.left)/2+shift*.25;return `M${sr.right+2},${sr.top+sr.height/2+shift} H${x} V${dr.top+dr.height/2+shift} H${dr.left-4}`;}
+  if(dr.right<sr.left){const x=(dr.right+sr.left)/2+shift*.25;return `M${sr.left-2},${sr.top+sr.height/2+shift} H${x} V${dr.top+dr.height/2+shift} H${dr.right+4}`;}
+  const below=dr.top>sr.top,sy=below?sr.bottom+2:sr.top-2,dy=below?dr.top-4:dr.bottom+4,sx=sr.left+sr.width*.5+shift,dx=dr.left+dr.width*.5+shift,my=(sy+dy)/2+shift*.25;return `M${sx},${sy} V${my} H${dx} V${dy}`;
+ }
+ let html='<defs><marker id="context-route-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#7a91a8" stroke-width="1.6"/></marker>';
+ for(const [key,d]of Object.entries(H.DT))html+=`<marker id="motion-arrow-${key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="${d.ink}" stroke-width="1.7"/></marker>`;
+ html+='</defs>';
+ for(const c of context){if(active.some(a=>a.from===c.from&&a.to===c.to))continue;const d=path(c);if(d)html+=`<path class="operator-route" d="${d}" marker-end="url(#context-route-arrow)" data-route="${c.from}-${c.to}"/>`;}
+ active.forEach((c,i)=>{const d=path(c);if(!d)return;const color=(H.DT[c.dtype]||H.DT.META).ink;html+=`<g class="motion-connection" data-motion-kind="${c.kind}"><title>${escape(c.label)}: ${escape(c.from)} → ${escape(c.to)} · ${c.dtype}</title><path class="transfer-underlay" d="${d}"/><path id="motion-path-${i}" d="${d}" stroke="${color}" marker-end="url(#motion-arrow-${c.dtype})" class="active-transfer"/>${state.animate?[0,.95].map(delay=>`<circle class="flow-particle" r="3.1" fill="${color}" stroke="white" stroke-width="1.2"><animateMotion dur="1.9s" begin="${delay}s" repeatCount="indefinite" path="${d}"/></circle>`).join(''):''}</g>`;});
+ svg.setAttribute('viewBox',`0 0 ${board.offsetWidth} ${board.offsetHeight}`);svg.innerHTML=html;
 }
 function scheduleDraw(){cancelAnimationFrame(drawRequest);drawRequest=requestAnimationFrame(drawTransfer);}
 function renderCurrent(){
  const {stage:s,frame:f}=current(),snapshot=state.side==='before'?f.before:f.snapshot;
+ $('operator-dataflow').innerHTML=A.overview(model,s,state.action);$('replay').innerHTML=A.icon('replay');
+ document.querySelector('.hardware-panel').classList.toggle('motion-off',!state.animate);$('animation-toggle').setAttribute('aria-pressed',state.animate);$('animation-toggle').innerHTML=A.icon(state.animate?'play':'release')+(state.animate?'Animation on':'Animation off');$('routes-toggle').setAttribute('aria-pressed',state.routes);$('routes-toggle').innerHTML=A.icon('load')+'Operator routes';
  document.querySelectorAll('[data-step]').forEach(e=>e.setAttribute('aria-pressed',+e.dataset.step===state.step));
  $('operator-number').textContent=`Operator ${String(state.step+1).padStart(2,'0')} / 20`;
  $('hardware-heading').textContent=s.title;$('operator-goal').textContent=s.goal;
@@ -51,18 +57,20 @@ function renderCurrent(){
  $('action-kind').textContent=f.kind==='Start'?'Start state':f.kind==='End'?'End state':`Action ${state.action} / ${s.frames.length-2} · ${f.kind}`;
  $('snapshot-id').textContent=`Snapshot ${String(snapshot.version).padStart(3,'0')}`;
  $('transport-current').textContent=s.title+' / '+f.title;$('action-title').textContent=f.title;$('action-summary').innerHTML=typed(f.summary);$('action-why').innerHTML=typed(f.why);
- const route=f.from&&f.to?`<span>${escape(E.locations[f.from])}</span><span aria-hidden="true">→</span><span>${escape(E.locations[f.to])}</span>${f.dtype?V.badge(f.dtype):''}`:f.unit?`<span>Execution: ${escape(E.locations[f.unit])}</span>${f.dtype?V.badge(f.dtype):''}`:`<span>Live state · ${s.outputs.map(id=>X.tensorButton(id,model.entities[id].label)).join(' ')}</span>`;
+ const motion=A.connections(f),label=id=>id==='attention'?'Attention kernel':E.locations[id];
+ const route=motion.length===2?`<span>${A.icon(A.locationIcons[motion[0].from])}${escape(label(motion[0].from))} ${V.badge(motion[0].dtype)}</span><span aria-hidden="true">→</span><span>${A.icon(A.locationIcons[motion[0].to])}${escape(label(motion[0].to))}</span><span aria-hidden="true">→</span><span>${escape(label(motion[1].to))} ${V.badge(motion[1].dtype)}</span>`:motion.length?`<span>${A.icon(A.locationIcons[motion[0].from])}${escape(label(motion[0].from))} ${V.badge(motion[0].dtype)}</span><span aria-hidden="true">→</span><span>${A.icon(A.locationIcons[motion[0].to])}${escape(label(motion[0].to))}</span>`:f.unit?`<span>${A.icon('control')}Execution: ${escape(E.locations[f.unit])}</span>`:`<span>Live state · ${s.outputs.map(id=>X.tensorButton(id,model.entities[id].label)).join(' ')}</span>`;
  $('action-route').innerHTML=route;
- $('continuity-note').innerHTML=f.kind==='Start'?(state.step?`<strong>Continuous boundary</strong> End of ${escape(model.stages[state.step-1].title)} = Start of ${escape(s.title)}. No buffer changes between them.`:'<strong>Initial state</strong> FP16 source parameters are in CPU DRAM.'):f.kind==='End'&&state.step<19?`<strong>Continuous boundary</strong> This snapshot is also Start of ${escape(model.stages[state.step+1].title)}.`:'<strong>Current action only</strong> The hardware model highlights one operation. All other live buffers remain visible.';
+ $('continuity-note').innerHTML=f.kind==='Start'?(state.step?`<strong>Continuous boundary</strong> End of ${escape(model.stages[state.step-1].title)} = Start of ${escape(s.title)}. No buffer changes between them.`:'<strong>Initial state</strong> FP16 source parameters are in CPU DRAM.'):f.kind==='End'&&state.step<19?`<strong>Continuous boundary</strong> This snapshot is also Start of ${escape(model.stages[state.step+1].title)}.`:'<strong>Current action</strong> Colored arrows and highlighted values show this action. Light paths provide operator context.';
  $('hardware-context').textContent=`${state.phase} · T = ${model.T} · ${state.side==='before'?'Before':'After'} action`;
  $('show-before').setAttribute('aria-pressed',state.side==='before');$('show-after').setAttribute('aria-pressed',state.side==='after');
- $('precision-legend').innerHTML=['FP16','FP32','INT4','INT8','INT32'].map(d=>V.badge(d,d==='INT4'?'INT4 · packed':d)).join('')+'<span class="legend-note">Color = dtype · Region = location · One arrow = current transfer</span>';
+ $('precision-legend').innerHTML=['FP16','FP32','INT4','INT8','INT32'].map(d=>V.badge(d,d==='INT4'?'INT4 · packed':d)).join('')+'<span class="legend-note">Color = dtype · Light paths = context · Colored arrows = current action</span>';
  $('hardware-map').innerHTML=X.diagram(model,f,snapshot,state.selected);$('state-changes').innerHTML=X.delta(model,f);
  $('handoff').innerHTML=`<strong>${f.kind==='End'?'Output ready':'Operator output'}</strong><div>${s.outputs.map(id=>X.tensorButton(id,model.entities[id].label)).join(' ')}</div>${state.step<19?`<small>Next: ${escape(model.stages[state.step+1].title)}</small>`:'<small>A continuing request starts another Decode forward with retained KV.</small>'}`;
  const spec=H.getSpec(M.recipes[state.recipe],state.phase,state.step),rows=[['Input',spec.input],['Storage',spec.storage],['Compute operands / operation',spec.operands],['Accumulator / Reduction',spec.accumulator],['Output',spec.output]];
  $('detail').innerHTML=`<div class="detail-body"><div class="step-label">Operator reference</div><h3>${escape(s.title)}</h3><p class="detail-story">${escape(s.explanation)}</p><div class="equation">${escape(s.equation)}</div><table class="spec-table"><tbody>${rows.map(([k,v])=>`<tr><th scope="row">${k}</th><td>${typed(v)}</td></tr>`).join('')}</tbody></table><p class="detail-source">References: ${sources(['llama','cuda',...([7,8,9].includes(state.step)?['flash','kv']:['qserve'])])}</p></div>`;
  if($('tensor-dialog').open&&state.selected)renderInspector();
  scheduleDraw();persist();
+ const overviewActive=$('operator-dataflow').querySelector('.overview-phase.is-current'),overviewScroll=$('operator-dataflow').querySelector('.overview-scroll');if(overviewActive&&overviewScroll&&(overviewActive.offsetLeft<overviewScroll.scrollLeft||overviewActive.offsetLeft+overviewActive.offsetWidth>overviewScroll.scrollLeft+overviewScroll.clientWidth))overviewScroll.scrollLeft=Math.max(0,overviewActive.offsetLeft-overviewScroll.clientWidth/2);
  const active=$('action-timeline').querySelector('[aria-pressed="true"]');if(active){const p=$('action-timeline');if(active.offsetLeft<p.scrollLeft||active.offsetLeft+active.offsetWidth>p.scrollLeft+p.clientWidth)p.scrollLeft=Math.max(0,active.offsetLeft-p.clientWidth/2);}
 }
 function renderInspector(){const dialog=$('tensor-dialog');$('tensor-inspector').innerHTML=X.inspector(model,state.selected,state.step,state.action);const h=$('tensor-inspector').querySelector('h2');if(h)h.id='tensor-dialog-title';}
@@ -107,6 +115,8 @@ document.addEventListener('click',e=>{
 });
 $('prev').onclick=()=>{stop();advance(-1);};$('next').onclick=()=>{stop();advance(1);};
 $('prev-operator').onclick=()=>{stop();moveOperator(state.step-1);};$('next-operator').onclick=()=>{stop();moveOperator(state.step+1);};
+$('replay').onclick=()=>{stop();renderCurrent();};
+$('routes-toggle').onclick=()=>{state.routes=!state.routes;renderCurrent();};$('animation-toggle').onclick=()=>{state.animate=!state.animate;renderCurrent();};
 $('reset').onclick=()=>{stop();moveOperator(0);};
 $('play').onclick=()=>{if(timer)return stop();if(state.step===19&&state.action===model.stages[19].frames.length-1)moveOperator(0);$('play').textContent='Pause';$('play').setAttribute('aria-pressed','true');timer=setInterval(()=>{if(!document.hidden)advance(1);},3200);};
 $('show-before').onclick=()=>{stop();state.side='before';renderCurrent();};$('show-after').onclick=()=>{stop();state.side='after';renderCurrent();};
