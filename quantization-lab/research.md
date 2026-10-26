@@ -70,5 +70,5 @@
 - 8 种 recipe/phase 组合的 20 个步骤完整性检查通过。
 - ties-to-even、clipping、未截断误差上界、INT8 点积缩放和 KV payload 数值检查通过。
 - Dashmotion 原版结构检查器：hardware.html 为 0 violations。
-- 本地 HTTP 预览受运行环境权限限制；上线后检查浏览器交互。
+- 本地 HTTP 预览受运行环境权限限制。公开上线后，已通过浏览器核对方案切换、prefill/decode、KV 8→9 的 shape、逐步导航与播放/暂停、量化滑块、显存数值、分享链接刷新恢复与 skill 选型内容；390px 视图无整页横向溢出；没有浏览器 console error。
 - 发布位置为现有公开 LLM 教学站点的独立 quantization-lab 路径。
