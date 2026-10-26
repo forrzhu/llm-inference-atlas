@@ -65,7 +65,7 @@ function overview(model,stage,cursor){
   let lines=[],formats='';
   if(g.kind==='Start'||g.kind==='Output'){
    const ids=g.kind==='Start'?stage.inputs:stage.outputs,snapshot=g.kind==='Start'?stage.start:stage.end;
-   const cells=ids.map(id=>Object.values(snapshot.cells).find(c=>c.entity===id&&['weights','activations','kv','ssd','host','registers'].includes(c.loc))).filter(Boolean);
+   const priority=['weights','activations','kv','registers','host','ssd','cpu','l2','shared'];const cells=ids.map(id=>priority.map(loc=>Object.values(snapshot.cells).find(c=>c.entity===id&&c.loc===loc)).find(Boolean)).filter(Boolean);
    lines=[ids.map(id=>model.entities[id].label).join(' / '),[...new Set(cells.map(c=>E.locations[c.loc]))].join(' · ')];formats=formatList(cells);
   }else if(g.kind==='Load'){
    const loads=frames.filter(f=>f.kind==='Load'),sources=[...new Set(loads.map(f=>f.from).filter(l=>l&&!['l2','shared','registers'].includes(l)))],targets=[...new Set(loads.map(f=>f.to).filter(Boolean))],onchip=targets.filter(l=>['l2','shared','registers'].includes(l));
@@ -77,7 +77,7 @@ function overview(model,stage,cursor){
   }
   const iconName={Start:'input',Load:'load',Convert:'convert',Compute:g.label==='GEMM'?'tensor':'cuda',Output:'store',Initialize:'cache',Control:'control',Repeat:'replay'}[g.kind]||'dot';
   if(index)html+=`<span class="overview-connector ${active?'is-current':''} ${done?'is-done':''}" aria-hidden="true"><svg viewBox="0 0 28 20"><path d="M2 10h22m-6-5 6 5-6 5"/><circle cx="7" cy="10" r="2"/></svg></span>`;
-  html+=`<button class="overview-phase ${active?'is-current':''} ${done?'is-done':''}" data-action="${g.indices[0]}" data-phase-card="${index}" aria-pressed="${active}" title="${esc(frames.map(f=>f.title).join('; '))}"><span class="overview-phase-heading">${icon(iconName)}<strong>${esc(g.label)}</strong><span>${String(index+1).padStart(2,'0')}</span></span><span class="overview-phase-copy">${lines.map(l=>`<span>${esc(l)}</span>`).join('')}</span><span class="overview-formats">${formats}</span><small>${g.indices[0]===0&&g.indices.length===1?'Start state':g.indices.length===1&&g.indices[0]===stage.frames.length-1?'End state':`Actions ${Math.max(1,g.indices[0])}–${Math.min(stage.frames.length-2,g.indices.at(-1))}`}</small></button>`;
+  html+=`<button class="overview-phase ${active?'is-current':''} ${done?'is-done':''}" data-action="${g.indices[0]}" data-phase-card="${index}" aria-pressed="${active}" title="${esc(frames.map(f=>f.title).join('; '))}"><span class="overview-phase-heading">${icon(iconName)}<strong>${esc(g.label)}</strong><span>${String(index+1).padStart(2,'0')}</span></span><span class="overview-phase-copy">${lines.map(l=>`<span>${esc(l)}</span>`).join('')}</span><span class="overview-formats">${formats}</span><small>${g.indices[0]===0&&g.indices.length===1?'Start state':g.indices.length===1&&g.indices[0]===stage.frames.length-1?'End state':Math.max(1,g.indices[0])===Math.min(stage.frames.length-2,g.indices.at(-1))?`Action ${Math.max(1,g.indices[0])}`:`Actions ${Math.max(1,g.indices[0])}–${Math.min(stage.frames.length-2,g.indices.at(-1))}`}</small></button>`;
  });
  return `<div class="dataflow-title"><strong>${icon('load')}Operator dataflow</strong><span>Select a stage to inspect its actions</span></div><div class="overview-scroll"><div class="overview-phases">${html}</div></div>`;
 }

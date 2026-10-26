@@ -4,7 +4,7 @@ let operators=0,arrows=0;
 for(const r of Object.keys(M.recipes))for(const phase of ['prefill','decode']){
  const model=E.build(r,phase);
  for(const s of model.stages){
-  const groups=A.phaseGroups(s);assert(groups.length>=3&&groups.length<=5,`${s.title}: ${groups.length} readable phases`);
+  const groups=A.phaseGroups(s);if(s.id>=2&&s.inputs.includes('W'))assert(!A.overview(model,s,0).includes('SSD'),'Runtime weights are read from GPU DRAM, not the SSD copy');assert(groups.length>=3&&groups.length<=5,`${s.title}: ${groups.length} readable phases`);
   assert.deepEqual(groups.flatMap(g=>g.indices),s.frames.map((_,i)=>i),'Every action is represented exactly once and in order');
   for(const [i,f]of s.frames.entries()){
    const connections=A.connections(f);for(const c of connections){assert(c.from!==c.to);assert(E.locations[c.from]||c.from==='attention');assert(E.locations[c.to]||c.to==='attention');arrows++;}

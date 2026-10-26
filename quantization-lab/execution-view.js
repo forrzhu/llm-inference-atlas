@@ -9,8 +9,8 @@ function locationBox(id,title,frame,snapshot,selected){
  const isUnit=['cpu','cuda','tensor'].includes(id),active=frame.unit===id;
  const source=frame.from===id,dest=frame.to===id,changed=new Set(frame.changes.filter(c=>c.after).map(c=>c.after.key));
  const cells=Object.values(snapshot.cells).filter(c=>c.loc===id);
- const released=frame.changes.filter(c=>!c.after&&c.before.loc===id&&!snapshot.cells[c.before.key]).map(c=>c.before);
- const reading=c=>(frame.entities.includes(c.entity)&&(frame.from===id||(frame.unit&&id==='registers')));
+ const released=frame.kind==='Release'?frame.changes.filter(c=>!c.after&&c.before.loc===id&&!snapshot.cells[c.before.key]).map(c=>c.before):[];
+ const reading=c=>Boolean(frame.before.cells[c.key]&&frame.entities.includes(c.entity)&&(frame.from===id||(frame.unit&&id==='registers')));
  let status=source&&dest?'Convert':source?'Source':dest?'Destination':active?'Active':released.length?'Release':cells.length?'Retained':'Idle';
  if(frame.unit==='sm'&&id==='tensor')status='Kernel-dependent';
  const computeNote=id==='cpu'?'Tokenizer / runtime control':id==='cuda'?'Elementwise / reductions / conversion':'Matrix multiply-accumulate';

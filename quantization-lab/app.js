@@ -10,7 +10,7 @@ const bytes=n=>n>=2**30?(n/2**30).toFixed(2)+' GiB':n>=2**20?(n/2**20).toFixed(1
 const sources=ids=>ids.map(id=>{const r=M.references.find(r=>r.id===id);return r?`<a href="${r.url}" target="_blank" rel="noopener">${escape(r.name.split(' · ')[0])} ↗</a>`:'';}).join('');
 const typeFromBits=bits=>bits===4?'INT4':bits===8?'INT8':'FP16';
 const current=()=>{const stage=model.stages[state.step];state.action=Math.min(stage.frames.length-1,state.action);return{stage,frame:stage.frames[state.action]};};
-function persist(){const p=new URLSearchParams({v:'20261026h',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab,routes:state.routes?'1':'0',motion:state.animate?'on':'off'});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
+function persist(){const p=new URLSearchParams({v:'20261026i',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab,routes:state.routes?'1':'0',motion:state.animate?'on':'off'});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
 function stop(){clearInterval(timer);timer=null;$('play').textContent='Play';$('play').setAttribute('aria-pressed','false');}
 function renderConfig(){
  const r=M.recipes[state.recipe],desc={fp16:'FP16 operands · FP32 accumulator',w4:'INT4 storage · FP16 GEMM',w8:'INT8 GEMM · INT32 accumulator',qserve:'INT4 → INT8 · INT8 GEMM'};
@@ -22,21 +22,44 @@ function renderConfig(){
 }
 function renderFlow(){
  let group='';$('flow').innerHTML=model.stages.map(s=>{const g=s.id<2?'Setup':s.id===2?'Input':s.id<12?'Attention · layer 1':s.id<17?'FFN · layer 1':s.id===17?'Layer stack':'Output';let heading='';if(g!==group){heading=`<div class="flow-group">${g}</div>`;group=g;}
- const d=[4,10,13,15].includes(s.id)?'W '+V.badge(model.W)+' A '+V.badge(typeFromBits(M.recipes[state.recipe].ab)):[6,7,9].includes(s.id)?'KV '+V.badge(model.KV):s.id===18?'ID '+V.badge('INT32'):s.id<2?'W '+V.badge(model.W):V.badge('FP16');
+ const d=[4,10,13,15].includes(s.id)?'W '+V.badge(model.W)+' A '+V.badge(typeFromBits(M.recipes[state.recipe].ab)):[6,7,9].includes(s.id)?'KV '+V.badge(model.KV):[18,19].includes(s.id)?'ID '+V.badge('INT32'):s.id<2?'W '+V.badge(model.W):V.badge('FP16');
  return heading+`<button class="flow-node" data-step="${s.id}" aria-pressed="${s.id===state.step}"><span class="step-num">${String(s.id+1).padStart(2,'0')}</span><span><span class="node-title">${escape(s.title)}</span><span class="node-meta">${d}<small>${s.frames.length-2} actions</small></span></span></button>`;
  }).join('');
 }
 function drawTransfer(){
  const {stage,frame}=current(),svg=$('transfer-overlay'),board=$('hardware-board');if(!svg||!board)return;
+ if(!board.offsetWidth||!board.offsetHeight){svg.innerHTML='';return;}
  const active=A.connections(frame),context=state.routes||!active.length?A.routes(stage):[],b=board.getBoundingClientRect(),scale=board.offsetWidth/b.width;
  const getRect=id=>{const el=board.querySelector(`[data-memory="${id}"]`);if(!el)return null;const r=el.getBoundingClientRect();return{left:(r.left-b.left)*scale,right:(r.right-b.left)*scale,top:(r.top-b.top)*scale,bottom:(r.bottom-b.top)*scale,width:r.width*scale,height:r.height*scale};};
- function path(c){const sr=getRect(c.from),dr=getRect(c.to);if(!sr||!dr)return null;const shift=(c.lane||0)*13;
+ function path(c){
+  const sr=getRect(c.from),dr=getRect(c.to);if(!sr||!dr)return null;const shift=(c.lane||0)*13;
+  const line=points=>points.map((p,i)=>(i?'L':'M')+p[0]+','+p[1]).join(' '),dram=new Set(['weights','activations','kv']),host=new Set(['host','cpu','ssd']);
+  const w=getRect('weights'),l2=getRect('l2'),trunk=(w.right+l2.left)/2;
+  if((host.has(c.from)&&dram.has(c.to))||(dram.has(c.from)&&host.has(c.to))){
+   const forward=host.has(c.from),h=forward?sr:dr,d=forward?dr:sr,hr=board.querySelector('.host-group').getBoundingClientRect(),gr=board.querySelector('.gpu-group').getBoundingClientRect(),y=((hr.bottom+gr.top)/2-b.top)*scale;
+   const points=[[h.left+h.width/2,h.bottom+2],[h.left+h.width/2,y],[trunk,y],[trunk,d.top+d.height/2],[d.right+4,d.top+d.height/2]];return line(forward?points:points.reverse());
+  }
+  if(dram.has(c.from)!==dram.has(c.to)){
+   const forward=dram.has(c.from),d=forward?sr:dr,o=forward?dr:sr,other=forward?c.to:c.from;
+   if(other==='l2'){
+    const points=[[d.right+2,d.top+d.height/2],[trunk,d.top+d.height/2],[trunk,o.top+o.height/2],[o.left-4,o.top+o.height/2]];return line(forward?points:points.reverse());
+   }
+   if(['registers','shared'].includes(other)){
+    if(forward){const x=o.left+o.width/2,y=o.top-8;return line([[d.right+2,d.top+d.height/2],[trunk,d.top+d.height/2],[trunk,y],[x,y],[x,o.top-4]]);}
+    const shared=getRect('shared'),reg=getRect('registers'),x=o.left+o.width/2,y=Math.max(shared.bottom,reg.bottom)+12;
+    return line([[x,o.bottom+2],[x,y],[trunk,y],[trunk,d.top+d.height/2],[d.right+4,d.top+d.height/2]]);
+   }
+  }
+  if(c.from==='l2'&&['registers','shared'].includes(c.to)){
+   const right=c.to==='registers',x=right?Math.max(sr.right,dr.right)+7:Math.min(sr.left,dr.left)-7;
+   return line([[right?sr.right+2:sr.left-2,sr.top+sr.height/2],[x,sr.top+sr.height/2],[x,dr.top+dr.height/2],[right?dr.right+4:dr.left-4,dr.top+dr.height/2]]);
+  }
   if(sr.right<dr.left){const x=(sr.right+dr.left)/2+shift*.25;return `M${sr.right+2},${sr.top+sr.height/2+shift} H${x} V${dr.top+dr.height/2+shift} H${dr.left-4}`;}
   if(dr.right<sr.left){const x=(dr.right+sr.left)/2+shift*.25;return `M${sr.left-2},${sr.top+sr.height/2+shift} H${x} V${dr.top+dr.height/2+shift} H${dr.right+4}`;}
-  const below=dr.top>sr.top,sy=below?sr.bottom+2:sr.top-2,dy=below?dr.top-4:dr.bottom+4,sx=sr.left+sr.width*.5+shift,dx=dr.left+dr.width*.5+shift,my=(sy+dy)/2+shift*.25;return `M${sx},${sy} V${my} H${dx} V${dy}`;
+  const below=dr.top>sr.top,sy=below?sr.bottom+2:sr.top-2,dy=below?dr.top-4:dr.bottom+4,left=Math.max(sr.left,dr.left)+8,right=Math.min(sr.right,dr.right)-8,x=Math.max(left,Math.min(right,(left+right)/2+shift));return `M${x},${sy} V${dy}`;
  }
- let html='<defs><marker id="context-route-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#7a91a8" stroke-width="1.6"/></marker>';
- for(const [key,d]of Object.entries(H.DT))html+=`<marker id="motion-arrow-${key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="${d.ink}" stroke-width="1.7"/></marker>`;
+ let html='<defs><marker id="context-route-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#7a91a8" stroke-width="1.6"/></marker>';
+ for(const [key,d]of Object.entries(H.DT))html+=`<marker id="motion-arrow-${key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M1 1 L9 5 L1 9" fill="none" stroke="${d.ink}" stroke-width="1.7"/></marker>`;
  html+='</defs>';
  for(const c of context){if(active.some(a=>a.from===c.from&&a.to===c.to))continue;const d=path(c);if(d)html+=`<path class="operator-route" d="${d}" marker-end="url(#context-route-arrow)" data-route="${c.from}-${c.to}"/>`;}
  active.forEach((c,i)=>{const d=path(c);if(!d)return;const color=(H.DT[c.dtype]||H.DT.META).ink;html+=`<g class="motion-connection" data-motion-kind="${c.kind}"><title>${escape(c.label)}: ${escape(c.from)} → ${escape(c.to)} · ${c.dtype}</title><path class="transfer-underlay" d="${d}"/><path id="motion-path-${i}" d="${d}" stroke="${color}" marker-end="url(#motion-arrow-${c.dtype})" class="active-transfer"/>${state.animate?[0,.95].map(delay=>`<circle class="flow-particle" r="3.1" fill="${color}" stroke="white" stroke-width="1.2"><animateMotion dur="1.9s" begin="${delay}s" repeatCount="indefinite" path="${d}"/></circle>`).join(''):''}</g>`;});
