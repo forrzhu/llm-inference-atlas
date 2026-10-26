@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="逐步看清 LLM 推理的数据、精度、GPU 存储与计算位置。对照基础 FP16 与 QServe W4A8KV4。">
+  <title>LLM 推理显微镜 · 数据、精度与 GPU</title>
+  <style>
+:root{color-scheme:light;--ink:#182d37;--muted:#52666e;--paper:#f5f7f5;--panel:#fff;--line:#dce5e3;--teal:#086b68;--teal-light:#e2f2ec;--blue:#285eab;--purple:#7650b2;--amber:#9b5f0c;--green:#20705a;--shadow:0 12px 36px #183b3810}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}button,select,input{font:inherit}button,a,input,select{touch-action:manipulation}button{cursor:pointer}button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,[role=button]:focus-visible{outline:3px solid #3ca79a;outline-offset:4px}button{border:0}button:disabled{opacity:.35;cursor:default}a{color:var(--teal)}[hidden]{display:none!important}h1,h2,h3,p{margin:0}h1{font-size:clamp(32px,4.4vw,58px);line-height:1.22;letter-spacing:-1.8px;font-weight:650}h2{font-size:23px;line-height:1.4;letter-spacing:-.5px;font-weight:600}h3{font-size:17px;font-weight:600}strong{font-weight:600}.masthead{max-width:1460px;margin:auto;padding:24px 42px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}.brand{display:flex;gap:12px;align-items:center;text-decoration:none;color:var(--ink);font-size:17px;font-weight:600}.brand small{display:block;font-size:9px;letter-spacing:2.3px;font-weight:500;color:var(--muted);margin-top:1px}.brand-symbol{background:var(--ink);color:#e0f3c4;width:39px;height:43px;border-radius:11px 11px 11px 1px;text-align:center;line-height:39px;font:35px/39px Georgia,serif}.source-link{font-size:13px;text-decoration:none;color:var(--muted)}main{max-width:1460px;margin:auto;padding:0 42px}.intro{padding:47px 0 35px}.eyebrow{color:var(--teal);font-size:11px;letter-spacing:1.9px;font-weight:650;margin-bottom:10px}.intro-text{max-width:790px;margin-top:20px;color:var(--muted);font-size:16px;line-height:1.85}.scope{margin-top:22px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:9px}.dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex-shrink:0}.mobile-break{display:none}.workbench{background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}.settings{display:flex;flex-wrap:wrap;gap:20px 38px;padding:23px 26px 15px;align-items:center}.setting-group{display:flex;gap:13px;align-items:center}.control-label{font-size:12px;color:var(--muted)}.segmented{padding:4px;background:#edf1ef;border-radius:9px;display:flex;gap:2px}.segmented button{background:transparent;padding:8px 13px;color:var(--muted);font-size:13px;border-radius:6px;white-space:nowrap}.segmented button[aria-pressed=true]{background:#fff;color:var(--ink);box-shadow:0 1px 5px #173b3515;font-weight:600}.mode-caption{margin:0 26px 19px;color:var(--muted);font-size:12px;min-height:22px}.view-tabs{display:flex;gap:23px;padding:0 26px;border-bottom:1px solid var(--line);overflow-x:auto}.view-tabs button{background:transparent;border-bottom:3px solid transparent;padding:13px 1px 12px;color:#8b999e;font-size:11px;white-space:nowrap}.view-tabs button span{font-size:13px;margin-left:6px;color:var(--muted)}.view-tabs button[aria-selected=true]{border-color:var(--teal);color:var(--teal)}.view-tabs button[aria-selected=true] span{color:var(--teal);font-weight:600}.transport{display:flex;justify-content:space-between;align-items:center;padding:18px 26px 15px;gap:15px}.transport-buttons{display:flex;align-items:center;gap:8px}.primary-button{color:#fff;background:var(--teal);border-radius:7px;padding:9px 17px;font-size:13px;min-width:125px}.primary-button:hover{background:#095653}.icon-button{background:#eef3f1;border:1px solid #e0e7e4;width:36px;height:38px;border-radius:7px;color:var(--ink);font-size:19px}.text-button{background:none;color:var(--muted);font-size:12px;padding:7px 9px}.step-position{display:flex;gap:20px;align-items:center;font-size:12px;color:var(--muted)}#step-counter{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;color:var(--teal);font-size:14px}.step-position select{border:0;background:transparent;color:var(--ink);padding:5px;font-size:12px}.progress-track{height:3px;background:#edf2f0}#progress-fill{height:100%;background:var(--teal);transition:width .3s}.stage-nav{display:flex;gap:6px;padding:13px 26px;overflow-x:auto;scrollbar-width:thin;border-bottom:1px solid var(--line)}.stage-nav button{flex-shrink:0;background:transparent;padding:6px 10px;border-radius:5px;color:var(--muted);font-size:11px;white-space:nowrap}.stage-nav button.active{background:var(--teal-light);color:var(--teal);font-weight:600}.stage-nav button span{opacity:.65;margin-right:5px;font-family:ui-monospace,monospace}.learning-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;align-items:start}.visual-column{min-width:0;border-right:1px solid var(--line)}.panel-heading{display:flex;justify-content:space-between;align-items:center;padding:22px 24px 14px;gap:10px}.panel-heading .eyebrow{margin:0 0 4px;font-size:10px}.panel-heading h2{font-size:19px}.subtle-button{border:1px solid var(--line);background:#fff;border-radius:6px;color:var(--muted);padding:6px 11px;font-size:12px;white-space:nowrap}.map-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:0 24px 15px;font-size:10px;color:var(--muted)}.precision-legend{display:flex;gap:5px}.precision{display:inline-flex;align-items:center;border-radius:4px;padding:2px 6px;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;white-space:nowrap}.p4{background:#f0e9fa;color:var(--purple)}.p8{background:#fff1d8;color:var(--amber)}.p16{background:#e7f3eb;color:var(--green)}.p32{background:#e8eefb;color:var(--blue)}.neutral{background:#edf1f3;color:var(--muted)}.map-scroll{height:680px;overflow:auto;background:#f8faf9;border-block:1px solid var(--line);scrollbar-width:thin}.map-scroll svg{display:block;width:100%;min-width:670px}.diagram-footnote{padding:13px 24px;color:var(--muted);font-size:11px;line-height:1.7}.step-detail{padding:25px 23px;background:#fff;position:sticky;top:12px}.step-detail .step-index{color:var(--teal);font:12px/1.5 ui-monospace,monospace;letter-spacing:1px;margin-bottom:9px}.step-detail h2{font-size:24px;margin-bottom:10px}.step-detail .lead{font-size:14px;color:var(--muted);line-height:1.85}.precision-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:17px 0}.precision-line .arrow{font-size:13px;color:#93a3a1}.detail-item{padding:14px 0;border-top:1px solid var(--line)}.detail-label{display:block;font-size:10px;letter-spacing:1.5px;color:var(--teal);margin-bottom:5px;font-weight:600}.detail-item p{font-size:13px;line-height:1.8}.takeaway{background:var(--teal-light);border-radius:8px;padding:13px 14px;margin:15px 0}.takeaway p{font-size:13px;line-height:1.8;color:#17524d}.detail-source{font-size:10px;color:var(--muted);line-height:1.65}.shape-note{font-size:11px;color:var(--muted);padding-top:14px}.flow-edge{fill:none;stroke:#b9c9c5;stroke-width:1.6}.flow-edge.active{stroke:var(--teal);stroke-width:2.6;stroke-dasharray:8 5;animation:flowdash 1.7s linear infinite}.flow-edge.residual{stroke-dasharray:5 6}.node-box{fill:#fff;stroke:#d7e2df;stroke-width:1.2;transition:fill .25s,stroke .25s}.flow-node{cursor:pointer;outline:none}.flow-node:hover .node-box{stroke:#4a9c8e}.flow-node.active .node-box{fill:#e6f4ee;stroke:var(--teal);stroke-width:2.3}.flow-node.completed .node-box{fill:#f0f6f3}.node-title{fill:var(--ink);font-size:19px;font-weight:600}.node-detail{fill:var(--muted);font-size:14px}.edge-label{fill:#627b76;font-size:13px}.lane-label{fill:#7d938c;font-size:12px;letter-spacing:1.7px}.node-kind{fill:var(--teal);font-size:11px;letter-spacing:1px}.bank-box{fill:#edf2f6;stroke:#d3dde5;stroke-width:1}.bank-title{fill:#344e64;font-size:16px;font-weight:600}.bank-detail{fill:#5a7082;font-size:13px}.alternate-view{padding:30px 28px}.alternate-view .view-lead{color:var(--muted);font-size:14px;max-width:850px;margin:10px 0 25px}.ledger-scroll{overflow-x:auto}.ledger-table{border-collapse:collapse;width:100%;font-size:13px;min-width:760px}.ledger-table th{text-align:left;font-size:11px;color:var(--muted);font-weight:500;padding:12px 14px;background:#f3f6f4}.ledger-table td{border-bottom:1px solid var(--line);padding:14px;vertical-align:top;line-height:1.8}.ledger-table td:first-child{font-weight:600;min-width:130px}.ledger-table td:nth-child(3){min-width:140px}.ledger-note{margin-top:20px;padding:16px 20px;background:#f3f6f4;border-radius:9px;font-size:13px;line-height:1.9}.hardware-board{padding:8px 22px 15px;display:grid;grid-template-columns:1fr 1fr;gap:12px}.hw-unit{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fafcfb;transition:all .3s}.hw-unit.is-active{background:#e6f4ee;border-color:#51a68e;box-shadow:inset 0 0 0 1px #51a68e}.hw-unit h3{font-size:15px;display:flex;gap:7px;align-items:center}.hw-unit .hw-en{color:var(--muted);font:10px/1.6 ui-monospace,monospace;letter-spacing:.6px}.hw-unit p{font-size:11px;margin-top:9px;color:var(--muted)}.hw-unit .hw-data{margin-top:12px;background:#fff;padding:10px;border-radius:6px;font-size:12px;min-height:66px;line-height:1.8}.hw-unit .hw-data strong{display:block}.hw-unit .hw-role{font-size:10px;color:var(--teal);margin-top:9px}.hw-link{grid-column:1/-1;text-align:center;font-size:11px;color:var(--muted);padding:2px}.hw-sm{grid-column:1/-1;border:1px solid var(--line);border-radius:12px;padding:15px;background:#f5f8f6}.hw-sm>h3{font-size:12px;color:var(--muted);margin-bottom:10px}.sm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.sm-grid .hw-unit{background:#fff;padding:12px}.sm-grid .hw-unit.is-active{background:#e6f4ee}.hw-compute{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.hw-compute span{padding:7px 10px;background:#eaf0ed;border-radius:6px;font:11px/1.5 ui-monospace,monospace;color:var(--muted)}.hw-compute span.active{background:var(--teal);color:#fff}.tile-demo{margin:0 22px 12px;padding:17px;border-radius:10px;background:#f1f5f3}.tile-demo h3{font-size:13px}.tile-row{display:flex;align-items:center;gap:10px;margin-top:13px;flex-wrap:wrap}.tile-bank{display:grid;grid-template-columns:repeat(8,16px);gap:3px}.tile-bank i{height:13px;background:#d6dfe1;border-radius:2px}.tile-bank i.active{background:var(--purple);animation:tilepulse 1.7s ease infinite}.tile-label{font-size:11px;color:var(--muted);margin-top:6px}.tile-stage{padding:12px;border:1px solid #d1ded7;border-radius:6px;background:#fff;font:11px/1.7 ui-monospace,monospace;min-width:110px}.tile-arrow{font-size:18px;color:#7f9b8e}.tile-demo p{font-size:11px;line-height:1.8;color:var(--muted);margin-top:12px}.scale-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}.scale-panel{border:1px solid var(--line);border-radius:12px;padding:23px;background:#fbfcfa}.scale-panel h3{margin-bottom:15px}.scale-control{margin:25px 0;max-width:700px}.scale-control label{display:flex;justify-content:space-between;font-size:14px}.scale-control input{width:100%;accent-color:var(--teal);margin:15px 0 0}.number-vector{display:flex;gap:9px;margin:9px 0 20px;align-items:center}.number-vector .vlabel{font:13px ui-monospace,monospace;width:25px}.number-cell{padding:8px 10px;border-radius:6px;background:#edf2f0;font:16px/1.6 ui-monospace,monospace;min-width:60px;text-align:center}.number-cell.changed{background:#e1f1e9;color:var(--teal)}.scale-product{border-top:1px solid var(--line);padding-top:15px;font-size:14px}.scale-product strong{font:25px/1.8 ui-monospace,monospace;color:var(--teal)}.ruler{height:75px;display:flex;justify-content:space-between;align-items:flex-end;margin-top:20px;border-bottom:1px solid var(--line);position:relative}.ruler>span{width:1px;height:18px;background:#a0b4ac;position:relative}.ruler>span:first-child,.ruler>span:last-child{height:26px}.ruler-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:6px}.scale-help{font-size:12px;color:var(--muted);margin-top:14px;line-height:1.9}.scale-error{font-size:13px;margin-top:16px}.scale-error strong{color:var(--teal);font-variant-numeric:tabular-nums}.scale-mini-table{border-collapse:collapse;width:100%;font-size:12px;margin-top:15px}.scale-mini-table th,.scale-mini-table td{text-align:left;padding:7px;border-bottom:1px solid var(--line);font-weight:400}.scale-mini-table th{color:var(--muted)}.foundation-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:45px;margin-top:28px}.foundations{padding:56px 4px;border-bottom:1px solid var(--line)}.foundation-grid article{position:relative;padding-left:39px}.foundation-number{position:absolute;left:0;top:0;font:20px/1.6 Georgia,serif;color:#81a295}.foundation-grid p{color:var(--muted);font-size:13px;line-height:1.9;margin-top:10px}.section-intro h2{font-size:26px}.references{padding:45px 4px 35px}.reference-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:65px;margin-top:25px}.reference-grid ul{padding-left:18px;color:var(--muted);font-size:12px;line-height:1.95}.reference-grid li{margin-bottom:9px}.reference-card{display:block;text-decoration:none;border-bottom:1px solid var(--line);padding:15px 0}.reference-card strong{font-size:13px;display:block}.reference-card span{font-size:11px;color:var(--muted);display:block;margin-top:5px}footer{border-top:1px solid var(--line);padding:20px 0 30px;display:flex;justify-content:space-between;color:var(--muted);font-size:11px}dialog{padding:0;border:1px solid var(--line);border-radius:14px;max-width:1150px;width:95vw;height:92vh;background:#f8faf9;color:var(--ink)}dialog::backdrop{background:#102e3970;backdrop-filter:blur(5px)}.dialog-bar{position:sticky;top:0;background:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;z-index:2;border-bottom:1px solid var(--line);gap:12px}.dialog-bar span{color:var(--muted);font-size:12px}#dialog-map{overflow:auto}#dialog-map svg{display:block;min-width:750px;width:100%}.glossary-list{display:grid;grid-template-columns:1fr 1fr;gap:12px}.glossary-list div{background:#f4f7f5;padding:15px;border-radius:8px;font-size:12px}.glossary-list strong{display:block;font-size:13px;margin-bottom:5px}.glossary-list p{color:var(--muted)}@keyframes flowdash{to{stroke-dashoffset:-26}}@keyframes tilepulse{50%{opacity:.4}}
+@media(min-width:1350px){.learning-grid{grid-template-columns:minmax(0,1fr) 375px}.step-detail{padding:28px}.map-scroll{height:735px}}
+@media(max-width:1000px){main{padding:0 22px}.masthead{padding:20px 24px}.learning-grid{grid-template-columns:minmax(0,1fr) 300px}.step-detail{padding:20px 18px}.settings{gap:15px}.setting-group{gap:8px}.control-label{font-size:11px}.segmented button{padding:7px 10px;font-size:12px}.reference-grid{gap:30px}.foundation-grid{gap:20px}.map-scroll{height:640px}.hardware-board{padding:5px 13px}.tile-demo{margin:0 13px 12px}.sm-grid{grid-template-columns:1fr}.tile-bank{grid-template-columns:repeat(8,12px)}}
+@media(max-width:760px){main{padding:0 12px}.masthead{padding:16px}.intro{padding:30px 7px 25px}.intro h1{letter-spacing:-1px}.intro-text{font-size:14px}.scope{font-size:10px;align-items:flex-start}.mobile-break{display:block}.workbench{border-radius:13px}.settings{padding:18px 14px 10px;display:block}.setting-group{margin-bottom:10px;justify-content:space-between}.segmented button{padding:8px 10px;font-size:12px}.mode-caption{margin:0 14px 13px;font-size:11px}.view-tabs{gap:20px;padding:0 14px}.view-tabs button{font-size:10px}.view-tabs button span{font-size:12px}.transport{padding:14px;flex-wrap:wrap;gap:10px}.transport-buttons{gap:6px}.primary-button{padding:8px 11px;min-width:115px}.text-button{padding:7px}.step-position{width:100%;justify-content:space-between;gap:10px}.stage-nav{padding:10px 14px}.learning-grid{display:flex;flex-direction:column}.visual-column{width:100%;border-right:0;order:2}.step-detail{width:100%;position:static;order:1;padding:20px;border-bottom:1px solid var(--line)}.step-detail h2{font-size:22px}.step-detail .lead{font-size:13px}.detail-item{padding:10px 0}.detail-item p{font-size:12px}.takeaway{margin:10px 0}.shape-note{font-size:10px}.panel-heading{padding:18px 15px 12px}.panel-heading h2{font-size:16px}.map-tools{padding:0 15px 12px}.map-scroll{height:510px}.diagram-footnote{padding:12px 15px}.alternate-view{padding:23px 18px}.alternate-view h2{font-size:21px}.scale-layout{grid-template-columns:1fr}.scale-panel{padding:18px}.foundation-grid{grid-template-columns:1fr;gap:25px}.foundations{padding:34px 8px}.section-intro h2{font-size:22px}.reference-grid{grid-template-columns:1fr;gap:22px}.references{padding:32px 8px}.dialog-bar{padding:10px 12px}.dialog-bar span{display:none}.number-cell{min-width:50px;font-size:14px}.hardware-board{grid-template-columns:1fr 1fr;padding:5px 15px}.sm-grid{grid-template-columns:1fr 1fr}.tile-demo{margin:0 15px 12px}.glossary-list{grid-template-columns:1fr}footer{padding:18px 6px;font-size:10px;gap:12px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+  </style>
+
+
+</head>
+<body>
+<header class="masthead">
+  <a class="brand" href="#top" aria-label="回到顶部"><span class="brand-symbol" aria-hidden="true">μ</span><span>推理显微镜<small>LLM INFERENCE ATLAS</small></span></a>
+  <a class="source-link" href="#references">原理与依据 <span aria-hidden="true">↗</span></a>
+</header>
+<main id="top">
+  <section class="intro">
+    <p class="eyebrow">跟着数据走，从第一步开始</p>
+    <h1>一个 token，<br class="mobile-break">究竟经历了什么？</h1>
+    <p class="intro-text">看清每一步<strong>用什么数据、以什么精度、在哪里存储、在哪里计算</strong>。先走基础 FP16，再切换 QServe，观察改变发生的位置。</p>
+    <div class="scope"><span class="dot"></span> 单 GPU · 权重可完全驻留显存 · Llama 风格 decoder-only Transformer · 教学示意</div>
+  </section>
+
+  <section class="workbench" aria-label="推理流程演示">
+    <div class="settings">
+      <div class="setting-group"><span class="control-label">数值方案</span><div class="segmented" aria-label="数值方案"><button type="button" data-mode="fp16" aria-pressed="true">基础 FP16</button><button type="button" data-mode="qserve" aria-pressed="false">QServe W4A8KV4</button></div></div>
+      <div class="setting-group"><span class="control-label">推理阶段</span><div class="segmented" aria-label="推理阶段"><button type="button" data-phase="decode" aria-pressed="true">Decode · 逐个生成</button><button type="button" data-phase="prefill" aria-pressed="false">Prefill · 处理提示词</button></div></div>
+    </div>
+    <div class="mode-caption" id="mode-caption"></div>
+    <nav class="view-tabs" aria-label="学习视图">
+      <button type="button" data-view="flow" aria-selected="true">01 <span>全景与逐步推理</span></button>
+      <button type="button" data-view="hardware" aria-selected="false">02 <span>GPU 内部搬运</span></button>
+      <button type="button" data-view="ledger" aria-selected="false">03 <span>精度账本</span></button>
+      <button type="button" data-view="scale" aria-selected="false">04 <span>亲手试试缩放</span></button>
+    </nav>
+
+    <div id="walkthrough">
+      <div class="transport">
+        <div class="transport-buttons">
+          <button type="button" id="prev" class="icon-button" aria-label="上一步">←</button>
+          <button type="button" id="play" class="primary-button">▶ 自动演示</button>
+          <button type="button" id="next" class="icon-button" aria-label="下一步">→</button>
+          <button type="button" id="restart" class="text-button">从头开始</button>
+        </div>
+        <div class="step-position"><span id="step-counter">01 / 26</span><label>每步 <select id="speed" aria-label="自动播放每步停留时间"><option value="7000" selected>7 秒</option><option value="12000">12 秒</option><option value="3500">3.5 秒</option></select></label></div>
+      </div>
+      <div class="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
+      <div class="stage-nav" id="stage-nav" aria-label="跳转到流程步骤"></div>
+      <div class="learning-grid">
+        <div class="visual-column">
+          <section class="diagram-panel" id="flow-view" aria-label="完整推理流程图">
+            <div class="panel-heading"><div><p class="eyebrow">逻辑依赖图</p><h2>从载入模型到下一个 token</h2></div><button type="button" id="expand" class="subtle-button">展开大图 ↗</button></div>
+            <div class="map-tools"><span>点击任一节点查看；向下滚动看完整流程</span><div class="precision-legend"><span class="precision p4">INT4</span><span class="precision p8">INT8</span><span class="precision p16">FP16</span><span class="precision p32">INT32</span></div></div>
+            <div class="map-scroll" id="map-scroll"><svg id="flow-svg" viewBox="0 0 1000 2230" role="img" aria-label="可点击的 Transformer 推理全景图"></svg></div>
+            <p class="diagram-footnote">实线：数据依赖；虚线：权重供给或残差旁路。节点表示逻辑步骤，可能被融合成一个 GPU kernel。</p>
+          </section>
+          <section class="diagram-panel" id="hardware-view" hidden aria-label="GPU 内部数据流">
+            <div class="panel-heading"><div><p class="eyebrow">物理位置图</p><h2>存储与计算，是不同的地方</h2></div></div>
+            <div class="hardware-board" id="hardware-board"></div>
+            <div class="tile-demo" id="tile-demo"></div>
+            <p class="diagram-footnote">这里展示常见的分块路径；L2/L1 命中、缓存旁路和算子融合会改变实际搬运。动画不代表速度、容量或精确指令调度。</p>
+          </section>
+        </div>
+        <aside class="step-detail" aria-live="polite" aria-atomic="true" id="step-detail"></aside>
+      </div>
+    </div>
+    <section id="ledger-view" class="alternate-view" hidden aria-label="数据精度账本"></section>
+    <section id="scale-view" class="alternate-view" hidden aria-label="缩放互动实验"></section>
+  </section>
+
+  <section class="foundations" aria-label="读图基础">
+    <div class="section-intro"><p class="eyebrow">先建立三个位置概念</p><h2>数字存在哪，和数字怎么算，分开看。</h2></div>
+    <div class="foundation-grid">
+      <article><span class="foundation-number">A</span><h3>显存保管大数据</h3><p>模型权重和每层 KV cache 常驻 GPU 显存。HBM 是显存的一种；A100 用 HBM，L40S 用 GDDR6。</p></article>
+      <article><span class="foundation-number">B</span><h3>片上空间暂存小块</h3><p>共享内存供一个线程块协作；寄存器保存线程正在使用的数据与累加结果。容量较小，需要分块复用。</p></article>
+      <article><span class="foundation-number">C</span><h3>计算单元执行指令</h3><p>Tensor Core 擅长矩阵乘法；CUDA Core 等通用执行单元处理解包、缩放、归一化和逐元素操作。</p></article>
+    </div>
+  </section>
+  <section id="references" class="references">
+    <div class="section-intro"><p class="eyebrow">范围、依据与简化</p><h2>哪些是论文事实，哪些是教学约定？</h2></div>
+    <div class="reference-grid">
+      <div><h3>这里明确采用的范围</h3><ul>
+        <li>主线展开一个 Llama 风格、带 RoPE 和 SwiGLU 的 Transformer block；每层拥有自己的权重与 KV cache。</li>
+        <li>QServe 模式以 W4A8KV4 <strong>g128</strong> 解释分组重建。论文 A100 主基准采用 per-channel，L40S 采用 per-group；这里不比较性能。</li>
+        <li>Embedding、最终 LM head 和采样用于接全流程，示意采用 FP16 张量；<strong>不据此声称 QServe 对这些部件的真实精度</strong>。</li>
+        <li>Prefill 展示数学依赖与张量精度；FP16 基础模式是教学设定。QServe 解码 attention 的算子级描述来自论文，未逐条审计 softmax/归约指令精度。</li>
+        <li>不运行真实 LLM，不模拟真实延迟；示例数值不代表真实模型输出。重建为 FP16 不会恢复已经丢失的信息。</li>
+      </ul></div>
+      <div><h3>对照原始资料</h3>
+        <a class="reference-card" target="_blank" rel="noreferrer" href="https://proceedings.mlsys.org/paper_files/paper/2025/file/fbe2b2f74a2ece8070d8fb073717bda6-Paper-Conference.pdf"><strong>QServe · MLSys 2025 ↗</strong><span>Fig. 5、6、8；§3.2、§4.1–4.3、§5.1；Appendix C</span></a>
+        <a class="reference-card" target="_blank" rel="noreferrer" href="https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html"><strong>NVIDIA CUDA Programming Guide ↗</strong><span>Host / device、SM、共享内存、寄存器与计算单元</span></a>
+        <a class="reference-card" target="_blank" rel="noreferrer" href="https://github.com/mit-han-lab/omniserve"><strong>QServe 官方实现 ↗</strong><span>本演示解释论文方案；未把代码版本差异当成统一硬件规律。</span></a>
+      </div>
+    </div>
+  </section>
+  <footer><span>LLM 推理显微镜</span><span>基础先行，沿着数据理解计算。</span></footer>
+</main>
+<dialog id="map-dialog" aria-label="完整流程大图"><div class="dialog-bar"><strong>推理全景图</strong><span>节点可点击；滚动查看完整流程</span><button type="button" id="close-dialog" class="subtle-button">关闭 ✕</button></div><div id="dialog-map"></div></dialog>
+<script>
+(function(){
+  "use strict";
+  var paper="QServe §4.1、Fig. 8（论文第 6 页）";
+  function buildSteps(mode,phase){
+    var q=mode==="qserve", pre=phase==="prefill";
+    var n=pre?"3 个提示词 token（示意）":"当前这 1 个 token";
+    var x=pre?"X：[3, D]":"X：[1, D]";
+    var old=pre?"本次提示词":"历史 3 个 token + 当前 token（示意）";
+    var W=q?"UINT4 权重 + 量化参数":"FP16 权重";
+    var A=q?"INT8":"FP16";
+    var C=q?"INT32":"FP32（本示例选用）";
+    var kv=q?"INT4 KV + FP16 scales / zero points":"FP16 KV";
+    var gemm=q?"从 W4 重建的 INT8 权重 × INT8 输入；Tensor Core 以 INT32 累加，末尾乘回浮点 scale，输出 FP16。":"FP16 权重 × FP16 输入；本例选用支持 FP32 累加的 Tensor Core 矩阵乘法，最后输出 FP16。";
+    function s(id,node,title,lead,input,where,operation,output,remember,precisions,resources,source){
+      return {id:id,node:node,title:title,lead:lead,input:input,where:where,operation:operation,output:output,remember:remember,precisions:precisions,resources:resources,source:source||paper};
+    }
+    return [
+      s("prepare","setup",q?"离线准备压缩权重":"准备模型权重",
+        q?"这是部署前的准备，通常无需为每个请求重做。":"模型的参数已经训练好，推理时读取它们。",
+        "训练好的浮点权重；QServe 还使用校准样本选择量化参数。",
+        "离线工具使用 CPU / GPU；准备好的模型文件保存在 SSD。",
+        q?"先做旋转、平滑和裁剪等准备。分组方案先按 channel 量化至 INT8（保护范围 ±119），再按 128 个权重一组压成 UINT4，最后按计算顺序排列存储。SmoothAttention 缩放也折入 Q/K 权重。":"本演示假设 Transformer block 的权重以 FP16 保存，不进行 W4 量化。",
+        q?"持久文件：打包的 UINT4 权重、FP16 channel scale、UINT8 group scale、UINT4 group zero point。":"持久文件：FP16 模型权重。",
+        "这是模型准备阶段；后面的反量化是运行时读取小块权重。",
+        q?["FP16","INT8","UINT4"]:["FP16"],["ssd","cpu"],"QServe §3.1–3.2、§4.2；Fig. 6；部署加载为教学流程"),
+      s("load","setup","把模型载入 GPU",
+        "先把会反复使用的模型放到 GPU 显存里。",
+        "SSD 上的 "+W+"；Embedding / LM head 的精度另行约定。",
+        "典型路径：SSD → CPU DRAM → PCIe → GPU 显存。",
+        "加载并分配模型张量。本例假设显存足够容纳全部模型权重，且不使用 CPU offload。",
+        W+" 驻留 GPU 显存。后续 decode 迭代从显存 / GPU 缓存取数据。",
+        "每个 token 都需要使用权重，但通常不需要每次从 SSD 或 CPU 重新载入模型。",
+        q?["UINT4","FP16 参数"]:["FP16"],["ssd","cpu","vram"],"NVIDIA CUDA：Host / device；模型完全驻留是本演示设定"),
+      s("tokenize","tokens","把文字变成 token ID",
+        "文字先转换成整数编号，模型再根据编号查向量。",
+        pre?"一段提示词。":"当前 token 的整数 ID；首轮提示词需先经过 prefill。",
+        "Tokenizer 通常在 CPU 上运行；ID 从 CPU 内存传到 GPU。",
+        pre?"将文本切分并映射为 token ID。本例用 t₁、t₂、t₃ 表示 3 个 token，不对应真实 tokenizer。":"本轮输入通常是上一轮选出的 token ID。CPU 调度 kernel；并不需要把整个 KV cache 搬回 CPU。",
+        n+" 的整数 ID，常用 INT32 / INT64（依框架而定）。",
+        "token ID 是编号，和 A8 的数值量化不是同一件事。",
+        ["INT32 / INT64"],["cpu","vram"],"通用 decoder-only 推理流程；ID 类型依实现"),
+      s("embed","embed","查表得到输入向量",
+        "一个整数编号，变成一整行数字。",
+        n+" 的 token ID；Embedding 查找表。",
+        "Embedding 表存于 GPU 显存；GPU 执行索引读取。",
+        "每个 ID 选择对应的 embedding 行。得到隐藏向量 X，向量中的每个位置就是一个 channel（通道）。",
+        x+"，本例设为 FP16。进入第一层 Transformer block。",
+        "从这里开始，模型处理的是向量，不是原始文字。",
+        ["整数 ID","FP16"],["vram","registers"],"通用流程；Embedding FP16 是教学约定，未据 Fig. 8 推定 QServe 的该部件"),
+      s("norm1","norm1","先归一化输入",
+        "Llama 风格模型在 attention 子层之前做 RMSNorm。",
+        "当前层的 FP16 隐藏向量 X；RMSNorm 参数。",
+        "GPU 的通用计算单元；逻辑中间值在寄存器 / 临时缓冲区。",
+        q?"对向量做 RMSNorm。QServe 把接下来的 INT8 量化融合进同一个 kernel；图中把数学步骤分开，实际可直接输出 INT8。":"对向量做 RMSNorm。本例保留 FP16 输出；内部归约的精度由具体实现决定。",
+        q?"归一化后的逻辑浮点值，紧接着转换成 INT8 线性层输入。":"归一化后的 FP16 输入。",
+        "归一化改变数值分布；量化选择离散刻度。两者可以在同一 kernel 中完成。",
+        q?["FP16","INT8"]:["FP16"],["vram","registers","cuda"]),
+      s("actq","norm1",q?"A8：量化线性层输入":"输入保持 FP16",
+        q?"这里的 A，指送进 Q/K/V 投影层的输入 X。":"基础模式不需要这次 INT8 转换。",
+        "归一化后的输入向量。",
+        "GPU；通常融合在上一步 RMSNorm kernel 中。",
+        q?"每个 token 的向量采用对称 INT8 量化，并保留浮点 scale。直观上，用 scale 把浮点数对应到整数刻度，再取整。":"让归一化后的 FP16 值直接进入矩阵乘法。",
+        q?"INT8 输入 X₈ + 每个 token 的 scale。":"FP16 输入 X。",
+        "A8 指投影层的输入；投影层输出的 Q 并不因此必须是 INT8。",
+        q?["FP16","INT8"]:["FP16"],["registers","cuda"],"QServe §4.1、§5.1：per-token symmetric INT8"),
+      s("tiles","qkv","按小块读取 Q/K/V 权重",
+        "矩阵很大，计算 kernel 每次搬一小块，称为 tile。",
+        "当前输入 "+A+"；WQ、WK、WV 的 "+W+"。",
+        "GPU 显存 → L2 / 共享内存等片上路径 → 寄存器（常见 GEMM 路径）。",
+        "线程块协作载入输入块与权重块。同一个权重块可用于多个 token；命中的缓存可以减少显存读取。",
+        "本轮要使用的输入 / 权重小块已经靠近计算单元。",
+        "共享内存是协作暂存空间；寄存器保存线程当前直接使用的数据。",
+        q?["UINT4","INT8"]:["FP16"],["vram","l2","shared","registers"],"QServe §4.2.1–4.2.3；NVIDIA CUDA hardware model"),
+      s("dequantw","qkv",q?"W4 → INT8：重建当前权重块":"直接使用 FP16 权重块",
+        q?"数据在显存里占 4 bit，进入乘法前变成 8 bit。":"FP16 存储与乘法输入一致，无需 W4 解包。",
+        q?"打包的 UINT4 权重块、group scale / zero point。":"当前 FP16 权重块。",
+        "SM 内的寄存器；CUDA Core 等通用执行单元。",
+        q?"解包 4-bit 数，并用整数 group 参数重建 INT8 权重。四个 8-bit 值可配合放进一个 32-bit 寄存器处理；范围与运算顺序保证正确性。":"不执行这一步的量化转换，FP16 权重块直接供矩阵乘法使用。",
+        q?"临时 INT8 权重块，留在寄存器中供 Tensor Core 使用。":"FP16 权重块。",
+        "只重建当前要计算的 tile；显存中压缩的 W4 原件一直保留。",
+        q?["UINT4","INT8"]:["FP16"],["registers","cuda"],"QServe §3.1、§4.2.2；Fig. 5、6、10（g128 路径）"),
+      s("qkv","qkv","矩阵乘法生成 Q、K、V",
+        "同一份输入 X，分别使用 WQ、WK、WV 三组权重。",
+        A+" 输入 X；"+(q?"寄存器中的 INT8 权重块。":"FP16 权重块。"),
+        "Tensor Core 执行矩阵乘法；累加值位于寄存器。",
+        gemm+" 归约维度分成多块，循环载入、计算、累加，直到完成输出。",
+        "Q、K、V 均以 FP16 张量输出；原始 Q/K/V 是投影结果，不是权重矩阵。",
+        q?"INT8 × INT8 → INT32 累加 → 缩放 / 转换 → FP16 输出。":"FP16 输入与 FP16 输出之间，可使用 FP32 累加来降低求和误差。",
+        q?["INT8 × INT8","INT32","FP16"]:["FP16 × FP16","FP32 累加","FP16"],["shared","registers","tensor"],"QServe §4.1、Fig. 5d / Fig. 8；基础 FP32 累加为显式教学设定"),
+      s("rope","rope","给 Q / K 加位置信息",
+        "RoPE 根据 token 位置旋转 Q、K 的成对通道。",
+        "投影产生的 FP16 Q、K；当前位置。V 不做 RoPE。",
+        "GPU 通用执行单元；Q/K 张量的临时存储可在片上或 GPU 显存。",
+        q?"执行 RoPE。SmoothAttention 的对应放大 / 缩小已经折入离线 WQ/WK，所以这里的投影结果已经带有相应缩放；RoPE 成对通道共享缩放因子。":"对 Q、K 做 RoPE；位置改变注意力点积的结果。",
+        "用于 attention 的 FP16 Q；准备缓存的 FP16 K；FP16 V。",
+        "Q 留作当前计算；K、V 将被存起来，供当前及以后 token 使用。",
+        ["FP16"],["vram","registers","cuda"],"QServe §3.2、Fig. 7；RoPE 成对缩放约束；V 不旋转"),
+      s("writekv","cache",q?"KV4：压缩并写入缓存":"把 K / V 写入缓存",
+        pre?"为提示词中的每个 token 建立本层 KV cache。":"把当前 token 的 K、V 追加到本层已有 KV cache。",
+        "本层新产生的 FP16 K、V（K 已经过 RoPE）。",
+        "GPU 通用执行单元做量化；持久 cache 放在 GPU 显存。",
+        q?"动态、per-head、非对称 INT4 量化 K/V。分页 cache 还保存 FP16 scale 和 zero point；量化参数会随数据动态生成。":"本例按 FP16 保留 K/V，写入本层的缓存位置。",
+        "显存中本层的 "+kv+"；包含"+old+"。",
+        "KV cache 不保存 Q。不同层有自己的 K/V，不能把所有层共用成同一份。",
+        q?["FP16","INT4","FP16 参数"]:["FP16"],["registers","cuda","vram"],"QServe §4.1、§5.1：动态 per-head KV4；元数据为 FP16"),
+      s("readkv","readkv",pre?"使用本批提示词的 K / V":q?"读取 KV4，恢复浮点表示":"读取本层 K / V",
+        pre?"Prefill 的新 K/V 已经由本批投影产生，可以供本批 attention 使用。":"当前 Q 需要与本层缓存里的 K/V 配合计算。",
+        pre?"当前批投影产生的 FP16 K/V；K 已经过 RoPE。":"当前 FP16 Q；显存里的 "+kv+"。",
+        pre?"GPU attention kernel；本批 K/V 可在临时张量或片上路径提供。":"缓存从 GPU 显存 / L2 分块读取；QServe 在 GPU 内解包并重建浮点数。",
+        pre?"本演示的 prefill 教学路径直接使用本批浮点 K/V，同时另行写 cache，供未来 decode 使用。不强制先压成 KV4 再读回，也不据此推定 QServe 某个 prefill kernel 的内部实现。":q?"把要用的 K/V 块从 INT4 重建成 FP16，在 attention kernel 内消费。无需先把整个 cache 展开成一个新的 FP16 大副本。":"分块读取要计算的 FP16 K/V。这里的数据加载可以与后面的计算融合。",
+        "当前 Q 和本次所需的 K/V 块以 FP16 参与 attention。",
+        pre?"写入未来使用的 KV cache，与当前 prefill attention 怎样获得 K/V，是两条数据依赖。":"INT4 → FP16 只改变表示形式，不能找回量化时已丢失的信息。",
+        q&&!pre?["INT4","FP16"]:["FP16"],["vram","l2","registers","cuda"],pre?"通用 prefill 教学路径；不作 QServe prefill kernel 内部实现断言":"QServe §4.1、§4.3；算子融合与分块为依赖图中的逻辑展开"),
+      s("scores","scores","Q × K：算相关程度",
+        pre?"每个提示词位置计算自己对可见位置的相关程度。":"当前这一个 Q，分别与缓存中的 K 做点积。",
+        pre?"FP16 Q；本批可见位置的 FP16 K。":"FP16 Q；本层可见位置的 FP16 K（QServe 从 KV4 重建）。",
+        q&&!pre?"QServe 解码 attention：GPU CUDA Core 路径。":"GPU attention kernel；具体 Tensor / CUDA Core 路径依实现与阶段。",
+        "对应通道相乘，再沿通道求和；按 head 维度的平方根缩放。"+(pre?"因果 mask 遮住未来位置。":"只允许读取截至当前的位置。"),
+        pre?"每个 head 的 [3,3] 逻辑分数矩阵；未来位置被遮住。":"每个 head 对 4 个可见位置的逻辑分数（示意）。",
+        "这一步没有新的模型权重矩阵；使用的是已经生成的 Q 和 K。",
+        ["FP16 操作数","中间精度依 kernel"],["registers",q&&!pre?"cuda":"attention"],"QServe §4.1、§4.3；attention 数学定义；不推定每个累加器精度"),
+      s("softmax","softmax","Softmax：变成注意力比例",
+        "把分数转成非负、总和为 1 的注意力系数。",
+        "QK 点积分数与因果 mask。",
+        "GPU attention kernel；可能与前后步骤融合。",
+        "对同一 query 的可见位置做 softmax。稳定计算常减去最大分数；归约和指数等内部精度由 kernel 决定。",
+        "当前 query 对各位置的注意力系数 P。这些值是临时结果。",
+        "这里的“注意力权重”P 是动态算出来的系数，不是训练得到的 WQ / WK / WV。",
+        ["内部精度依 kernel"],["registers","cuda"],"QServe 解码 attention 为算子级 FP16 描述；softmax 内部细节不作统一保证"),
+      s("weightedv","weightedv","P × V：合并需要的信息",
+        "按刚才的比例，把不同 token 的 V 加权相加。",
+        "注意力系数 P；本层可见位置的 V。",
+        "GPU attention kernel；可沿用当前已加载的 V 块。",
+        "每个位置的 V 乘以对应比例，再加起来。多个 head 的结果拼接为 attention 输出。",
+        "FP16 attention 输出 O，进入输出投影层。",
+        "Q/K 决定看谁、看多少；V 提供被汇总的内容。",
+        ["FP16 张量","内部精度依 kernel"],["registers",q&&!pre?"cuda":"attention"],"QServe §4.1、§4.3；Fig. 8"),
+      s("outproj","outproj","输出投影：再次使用模型权重",
+        "Attention 的结果还要经过 WO 这个线性层。",
+        "FP16 attention 输出 O；"+W+" WO。",
+        "GPU：输入量化 / 权重块加载与重建 → Tensor Core GEMM。",
+        (q?"这里先额外量化 attention 输出为 INT8；这次量化在论文中是独立节点。":"保留 FP16 输入。")+gemm,
+        "FP16 输出，准备与子层输入的残差相加。",
+        "WQ/WK/WV、WO 和 FFN 都要使用各自权重；点积 attention 本身使用 Q/K/V。",
+        q?["FP16","INT8 × INT8","INT32","FP16"]:["FP16","FP32 累加","FP16"],["vram","shared","registers","tensor","cuda"]),
+      s("add1","add1","第一次残差相加",
+        "把 attention 子层的结果，加回进入该子层时的隐藏向量。",
+        "子层输入 X 的 FP16 残差；WO 的 FP16 输出。",
+        "GPU 通用逐元素运算；可以与邻近算子融合。",
+        "对应位置逐元素相加。本演示标注的是残差张量与输出张量的 FP16 接口，不强行规定内部指令精度。",
+        "更新后的 FP16 隐藏向量 X′。",
+        "GEMM 已经在末尾转换成 FP16，残差接口因此能够对齐。",
+        ["FP16 + FP16","FP16"],["vram","registers","cuda"]),
+      s("norm2","norm2","FFN 前的第二次归一化",
+        "同一个 Transformer block 还有 FFN 子层。",
+        "FP16 隐藏向量 X′。",
+        "GPU RMSNorm kernel；QServe 融合下一次输入量化。",
+        q?"RMSNorm 后按 token 转换为 INT8，产生供 FFN gate/up 投影使用的输入。":"RMSNorm 后保留 FP16，供 FFN 投影使用。",
+        A+" FFN 输入；FP16 的 X′ 仍作为后面的残差。",
+        "A8 不是只做一次；每个需要 INT8 输入的线性层都要准备相应输入。",
+        q?["FP16","INT8"]:["FP16"],["vram","registers","cuda"]),
+      s("ffnup","ffnup","FFN：gate / up 两次投影",
+        "Llama 风格的 SwiGLU FFN 有 gate 和 up 两条投影。",
+        A+" 输入；各自的 "+W+" Wgate 和 Wup。",
+        "GPU；各自加载权重块，在 Tensor Core 上做 GEMM。",
+        gemm+" gate 和 up 是两个逻辑线性投影，实际实现可合并调度。",
+        "两个 FP16 中间张量 gate、up；中间维度通常比隐藏维度 D 大。",
+        "FFN 在每个 token 内处理特征，不需要跨 token 读取 KV cache。",
+        q?["INT8 × INT8","INT32","FP16"]:["FP16 × FP16","FP32 累加","FP16"],["vram","shared","registers","tensor"],"QServe Fig. 8 / §4.1；SwiGLU 是本演示的 Llama 风格架构设定"),
+      s("gate","gate","非线性和逐元素相乘",
+        "在两次矩阵乘法之间，加入非线性表达能力。",
+        "FP16 gate 和 up。",
+        "GPU 通用执行单元；当前中间值可保留片上或经过临时显存缓冲。",
+        "计算 SiLU(gate) ⊙ up，其中 ⊙ 表示对应位置相乘。"+(q?"QServe 把给 down 投影的 INT8 量化融合到这个 activation kernel 中。":"基础模式保持 FP16 输出。"),
+        q?"INT8 输入 + per-token scale，供 Wdown 使用。":"FP16 中间结果，供 Wdown 使用。",
+        "这里是非线性 / 逐元素计算，不能全部当成 Tensor Core 矩阵乘法。",
+        q?["FP16","INT8"]:["FP16"],["registers","cuda"]),
+      s("ffndown","ffndown","FFN：down 投影",
+        "把中间特征投影回隐藏维度 D。",
+        A+" 中间输入；"+W+" Wdown。",
+        "GPU；载入这一层自己的 Wdown 小块，再进入 Tensor Core。",
+        gemm+" 临时 tile 消费后可被下一块数据覆盖。",
+        "FP16 FFN 输出，形状回到 "+x+"。",
+        "覆盖的是寄存器 / 暂存 tile；显存里的模型权重并没有被删掉。",
+        q?["INT8 × INT8","INT32","FP16"]:["FP16 × FP16","FP32 累加","FP16"],["vram","shared","registers","tensor"]),
+      s("add2","add2","第二次残差相加",
+        "把 FFN 结果加回 FFN 子层的输入。",
+        "FP16 X′；FP16 down 投影输出。",
+        "GPU 通用执行单元；可融合。",
+        "对应位置相加，得到当前 Transformer block 的输出。",
+        x+"，FP16，传给下一层。",
+        "QServe 的这个 block 整体是 FP16 输入、FP16 输出；内部多个 GEMM 使用 W4A8。",
+        ["FP16 + FP16","FP16"],["vram","registers","cuda"]),
+      s("layers","layers","对下一层重复",
+        "实际模型把多个 Transformer block 叠起来。",
+        "上一层的 FP16 隐藏向量；下一层自己的权重和 cache。",
+        "同一 GPU 上继续执行；多个 SM 分工处理不同 tile。",
+        "重复 RMSNorm → QKV → attention → WO → 残差 → FFN → 残差。每层缓存的是本层产生的 K/V。",
+        "最后一个 block 的 FP16 隐藏向量。",
+        "层与层之间传隐藏向量；每一层的历史 K/V 分别保留在显存里。",
+        ["FP16 接口"],["vram","registers"],"QServe Fig. 8；通用多层 decoder-only Transformer"),
+      s("head","head","最后归一化与词表投影",
+        "把最后的隐藏向量变成词表里每个候选 token 的分数。",
+        pre?"本演示只取提示词最后位置的隐藏向量。":"当前 token 的最后一层隐藏向量。",
+        "GPU；final norm 与 LM head。",
+        "最后归一化，再通过 LM head 得到 logits。本演示为了接全主线，约定这些张量为 FP16；实际实现与 QServe 的部件设置需另行核查。",
+        "词表大小的一组 logits，作为选择下一 token 的依据。",
+        "这里的 FP16 是明确的教学约定，不从 QServe block 图推断模型头的量化策略。",
+        ["FP16（教学约定）"],["vram","registers","tensor","cuda"],"通用推理流程；Embedding / LM head 在本演示中不属于 QServe 已核实 block 范围"),
+      s("sample","sample","选择下一个 token",
+        "从 logits 中选择一个整数编号。",
+        "词表 logits；temperature / top-k 等采样配置（若使用）。",
+        "本例放在 GPU 采样；实现也可选择其他位置。",
+        "可以选最大分数（greedy），也可以转换成概率后抽样；最终得到一个 token ID。",
+        "整数 token ID；送回下一轮输入，必要时传给 CPU 解码成文本。",
+        "每次产生的是一个 token，不一定是一个完整的汉字或单词。",
+        ["浮点 logits","整数 ID"],["registers","cuda","cpu"],"通用 decoder-only 采样流程；采样位置是本演示约定"),
+      s("nexttoken","sample",pre?"Prefill 完成，进入 Decode":"保留缓存，开始下一轮",
+        pre?"提示词处理完后，接下来每次只输入一个新 token。":"选出的 token 成为下一次 decode 的输入。",
+        "新 token ID；已经驻留显存的权重；各层已建立的 KV cache。",
+        "调度下一轮 GPU kernels；持久模型与 cache 保留在 GPU 显存。",
+        "下一轮从 embedding 开始，通过每个 block，只为新位置生成 Q/K/V，再追加新的 K/V。旧 token 的隐藏向量和 Q 通常不必全部重算。",
+        "输出继续增长；各层 cache 增加一个位置。寄存器 / 暂存空间反复复用。",
+        "跨轮保留权重和 K/V；按需重读小块数据，不是每轮重新载入整套模型。",
+        q?["W4 持久","KV4 持久","FP16 临时"]:["FP16 W / KV"],["vram","cpu"],"通用自回归推理；QServe §4.1 cache management")
+    ];
+  }
+  var nodes=[
+    {id:"setup",x:390,y:45,w:280,title:"部署前：准备并载入权重",detail:"SSD → CPU DRAM → GPU 显存",steps:[0,1],kind:"模型加载"},
+    {id:"tokens",x:390,y:160,w:280,title:"Tokenizer / 当前 token ID",detail:"整数编号，不是 A8 activation",steps:[2],kind:"CPU / 调度"},
+    {id:"embed",x:390,y:275,w:280,title:"Embedding 查表",detail:"整数 ID → FP16 隐藏向量 X",steps:[3],kind:"进入 GPU 推理"},
+    {id:"norm1",x:390,y:390,w:280,title:"RMSNorm + 准备输入",detail:"FP16 X → 归一化 → GEMM 输入",steps:[4,5],kind:"TRANSFORMER BLOCK"},
+    {id:"qkv",x:390,y:510,w:280,title:"Q / K / V 三个线性投影",detail:"读取权重块 → 矩阵乘法 → FP16",steps:[6,7,8],kind:"GEMM · 需要模型权重"},
+    {id:"rope",x:390,y:635,w:280,title:"RoPE：旋转 Q 和 K",detail:"Q / K：FP16；V 不旋转",steps:[9],kind:"位置信息"},
+    {id:"cache",x:40,y:760,w:265,title:"本层持久 KV cache",detail:"只保留 K / V；每层各有一份",steps:[10],kind:"GPU 显存"},
+    {id:"readkv",x:40,y:910,w:265,title:"按需读取 / 重建 K、V",detail:"分块读取，供当前 attention 使用",steps:[11],kind:"片上临时数据"},
+    {id:"scores",x:390,y:795,w:280,title:"Q × Kᵀ / √d",detail:"当前 Q 与可见 K 做点积",steps:[12],kind:"ATTENTION"},
+    {id:"softmax",x:390,y:925,w:280,title:"Mask + Softmax",detail:"分数 → 注意力系数 P",steps:[13],kind:"临时系数，不是模型参数"},
+    {id:"weightedv",x:390,y:1055,w:280,title:"P × V",detail:"按比例汇总 V → FP16 输出",steps:[14],kind:"ATTENTION"},
+    {id:"outproj",x:390,y:1185,w:280,title:"WO 输出投影",detail:"准备输入 + 权重块 → GEMM",steps:[15],kind:"GEMM · 需要模型权重"},
+    {id:"add1",x:390,y:1315,w:280,title:"残差相加 ①",detail:"子层输入 + 投影输出 → FP16",steps:[16],kind:"逐元素加法"},
+    {id:"norm2",x:390,y:1435,w:280,title:"RMSNorm + 准备输入",detail:"FFN 子层的输入",steps:[17],kind:"FFN"},
+    {id:"ffnup",x:390,y:1555,w:280,title:"Wgate / Wup 两个投影",detail:"各自 GEMM → 两份 FP16 结果",steps:[18],kind:"GEMM · 需要模型权重"},
+    {id:"gate",x:390,y:1675,w:280,title:"SiLU(gate) ⊙ up",detail:"逐元素非线性 / 相乘 → 准备输入",steps:[19],kind:"通用执行单元"},
+    {id:"ffndown",x:390,y:1795,w:280,title:"Wdown 投影",detail:"GEMM → FP16 隐藏维度",steps:[20],kind:"GEMM · 需要模型权重"},
+    {id:"add2",x:390,y:1915,w:280,title:"残差相加 ②",detail:"得到 FP16 block 输出",steps:[21],kind:"TRANSFORMER BLOCK 结束"},
+    {id:"layers",x:390,y:2035,w:280,title:"重复其余 block",detail:"每层自己的权重和 KV cache",steps:[22],kind:"更多层"},
+    {id:"head",x:50,y:2150,w:280,title:"Final norm + LM head",detail:"FP16 示例约定 → 词表 logits",steps:[23],kind:"模型头"},
+    {id:"sample",x:615,y:2150,w:325,title:"采样 → 下一 token → 再循环",detail:"权重、各层 KV 继续保留在显存",steps:[24,25],kind:"自回归循环"}
+  ];
+  window.ATLAS={buildSteps:buildSteps,nodes:nodes};
+})();
+
+</script>
+<script>
+(function(){
+  "use strict";
+  var state={mode:"fp16",phase:"decode",step:0,view:"flow",playing:false,delay:7000,lambda:1};
+  var timer=null, steps=[];
+  var el=function(id){return document.getElementById(id);};
+  var esc=function(v){return String(v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});};
+  var fmt=function(v){return Number(v.toFixed(3)).toLocaleString("en-US",{maximumFractionDigits:3});};
+  function badge(v){
+    var c=/UINT4|INT4|W4|KV4/.test(v)?"p4":/INT32|FP32/.test(v)?"p32":/INT8|A8/.test(v)?"p8":/FP16/.test(v)?"p16":"neutral";
+    return '<span class="precision '+c+'">'+esc(v)+'</span>';
+  }
+  function stop(){state.playing=false;clearTimeout(timer);timer=null;el("play").textContent="▶ 自动演示";}
+  function tick(){clearTimeout(timer);if(!state.playing)return;timer=setTimeout(function(){if(state.step>=steps.length-1){stop();return;}go(state.step+1,true);tick();},state.delay);}
+  function go(index,autoplay){
+    if(!autoplay)stop();
+    state.step=Math.max(0,Math.min(steps.length-1,index));
+    renderWalk();syncActive(true);
+  }
+  function sourceLabel(){return state.mode==="qserve"?"QServe g128 · block 内事实对照 Fig. 8；embedding / head 为 FP16 教学约定。":"基础 FP16 是教学设定：GEMM 使用 FP16 操作数、FP32 累加、FP16 输出；内部实现可不同。";}
+  function renderAll(){
+    steps=window.ATLAS.buildSteps(state.mode,state.phase);
+    el("mode-caption").textContent=sourceLabel()+(state.phase==="prefill"?" 当前一次处理 3 个提示词 token（示意）。":" 当前只处理 1 个 token，已有历史 cache。");
+    document.querySelectorAll("[data-mode]").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.mode===state.mode));});
+    document.querySelectorAll("[data-phase]").forEach(function(b){b.setAttribute("aria-pressed",String(b.dataset.phase===state.phase));});
+    renderDiagram();renderWalk();renderLedger();renderScale();syncActive(false);
+  }
+  function renderWalk(){
+    var s=steps[state.step];
+    el("prev").disabled=state.step===0;el("next").disabled=state.step===steps.length-1;
+    el("step-counter").textContent=String(state.step+1).padStart(2,"0")+" / "+steps.length;
+    el("progress-fill").style.width=((state.step+1)/steps.length*100)+"%";
+    el("stage-nav").innerHTML=steps.map(function(v,i){return '<button type="button" data-step="'+i+'" class="'+(i===state.step?"active":"")+'" aria-current="'+(i===state.step?"step":"false")+'"><span>'+String(i+1).padStart(2,"0")+'</span>'+esc(v.title)+'</button>';}).join("");
+    el("step-detail").innerHTML='<p class="step-index">STEP '+String(state.step+1).padStart(2,"0")+' / '+steps.length+'</p><h2>'+esc(s.title)+'</h2><p class="lead">'+esc(s.lead)+'</p><div class="precision-line">'+s.precisions.map(badge).join('<span class="arrow">→</span>')+'</div>'+
+      [["输入是什么",s.input],["在哪里发生",s.where],["具体做什么",s.operation],["输出与去向",s.output]].map(function(a){return '<div class="detail-item"><span class="detail-label">'+a[0]+'</span><p>'+esc(a[1])+'</p></div>';}).join("")+
+      '<div class="takeaway"><span class="detail-label">这一刻，记住</span><p>'+esc(s.remember)+'</p></div><p class="detail-source">依据：'+esc(s.source)+'</p><p class="shape-note">'+(state.phase==="prefill"?"当前例子 B=1，T=3；所有提示词位置一起处理。":"当前例子 B=1，T=1；历史 S=3，本轮追加后可见 4 个位置。")+' D 表示隐藏向量长度，实际模型会大得多。</p>';
+    renderHardware();
+  }
+  function svgText(x,y,t,cls,anchor){return '<text x="'+x+'" y="'+y+'" class="'+cls+'"'+(anchor?' text-anchor="'+anchor+'"':"")+'>'+esc(t)+'</text>';}
+  function renderDiagram(){
+    var q=state.mode==="qserve";
+    var chain=["setup","tokens","embed","norm1","qkv","rope"], after=["scores","softmax","weightedv","outproj","add1","norm2","ffnup","gate","ffndown","add2","layers"];
+    var nodes=window.ATLAS.nodes;
+    function node(id){return nodes.find(function(n){return n.id===id;});}
+    function edge(from,to,path,label,lx,ly,extra){
+      return '<g><path class="flow-edge '+(extra||"")+'" data-from="'+from+'" data-to="'+to+'" d="'+path+'" marker-end="url(#arrow)"/>'+(label?svgText(lx,ly,label,"edge-label"):"")+'</g>';
+    }
+    var html='<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9bb4aa"/></marker></defs>';
+    html+='<rect x="365" y="365" width="335" height="1660" rx="24" fill="#f0f5f2" stroke="#dce7e0" stroke-dasharray="5 6"/>';
+    html+=svgText(55,70,"前提：权重已能放入 GPU 显存","lane-label");
+    html+=svgText(55,92,"此后不再逐 token 从 SSD 重载","node-detail");
+    html+=svgText(745,400,"W：训练得到的参数","lane-label");
+    for(var i=0;i<chain.length-1;i++){var a=node(chain[i]),b=node(chain[i+1]);html+=edge(a.id,b.id,"M530 "+(a.y+86)+" V"+b.y);}
+    for(var j=0;j<after.length-1;j++){var c=node(after[j]),d=node(after[j+1]);html+=edge(c.id,d.id,"M530 "+(c.y+86)+" V"+d.y);}
+    html+=edge("rope","scores","M530 721 V795","Q：FP16",553,760);
+    html+=edge("qkv","cache","M390 553 H330 V705 H172 V760","V：FP16",175,695);
+    html+=edge("rope","cache","M390 678 H270 V735 H172 V760","K：FP16",285,720);
+    if(state.phase==="prefill"){
+      html+=edge("rope","readkv","M390 678 H325 V953 H305","本批 K",277,900);
+      html+=edge("qkv","readkv","M390 553 H20 V953 H40","本批 V",46,875);
+    }else{
+      html+=edge("cache","readkv","M172 846 V910",q?"KV4 + 参数":"FP16 K/V",54,885);
+    }
+    html+=edge("readkv","scores","M305 953 H345 V838 H390","K",353,829);
+    html+=edge("readkv","weightedv","M305 953 H332 V1098 H390","V",345,1089);
+    html+=edge("embed","add1","M670 318 H730 V1358 H670","","","","residual");
+    html+='<text x="754" y="980" transform="rotate(90 754 980)" class="edge-label">残差旁路 X · FP16</text>';
+    html+=edge("add1","add2","M670 1358 H715 V1958 H670","","","","residual");
+    html+='<text x="741" y="1540" transform="rotate(90 741 1540)" class="edge-label">残差旁路 X′ · FP16</text>';
+    html+=edge("layers","head","M530 2121 V2135 H190 V2150");
+    html+=edge("head","sample","M330 2193 H615","logits",423,2183);
+    html+=edge("sample","embed","M940 2193 H980 V318 H670","","","","residual");
+    html+='<text x="958" y="1650" transform="rotate(-90 958 1650)" class="edge-label">下一个 token · 回到 Embedding；保留 W 与 KV</text>';
+    html+='<g><rect x="777" y="510" width="188" height="278" rx="13" class="bank-box"/>'+svgText(793,539,"GPU 显存中的权重","bank-title")+svgText(793,568,q?"UINT4 + 量化参数":"FP16 权重","bank-detail")+svgText(793,602,"WQ · WK · WV","bank-detail")+svgText(793,628,"WO","bank-detail")+svgText(793,654,"Wgate · Wup","bank-detail")+svgText(793,680,"Wdown","bank-detail")+svgText(793,724,"每个线性层使用","bank-detail")+svgText(793,747,"自己的权重小块","bank-detail")+svgText(793,774,"权重原件持续保留","bank-detail")+'</g>';
+    [["qkv",553],["outproj",1228],["ffnup",1598],["ffndown",1838]].forEach(function(p){var yy=p[1];html+=edge("weights",p[0],"M815 788 V"+yy+" H670","","","","residual");});
+    nodes.forEach(function(n){
+      var detail=n.detail;
+      if(n.id==="norm1"||n.id==="norm2")detail=q?"Norm 后融合量化 → INT8 输入":"Norm 后保留 FP16 输入";
+      if(n.id==="qkv"||n.id==="outproj"||n.id==="ffnup"||n.id==="ffndown")detail=q?"W4 → INT8 × A8 → INT32 → FP16":"FP16 × FP16 → FP32 累加 → FP16";
+      if(n.id==="cache")detail=q?"INT4 K/V + FP16 scale / zero point":"FP16 K/V · 每层各有一份";
+      if(n.id==="readkv")detail=state.phase==="prefill"?"Prefill：直接使用本批 FP16 K / V":q?"KV4 → FP16，按块读取 / 重建":"按块读取 FP16 K / V";
+      if(n.id==="gate")detail=q?"FP16 非线性 / 相乘 → 融合量化 A8":"FP16 非线性 / 逐元素相乘";
+      html+='<g class="flow-node" data-node="'+n.id+'" role="button" tabindex="0" aria-label="'+esc(n.title)+'"><rect class="node-box" x="'+n.x+'" y="'+n.y+'" width="'+n.w+'" height="86" rx="11"/>'+svgText(n.x+16,n.y+19,n.kind,"node-kind")+svgText(n.x+16,n.y+46,n.title,"node-title")+svgText(n.x+16,n.y+70,detail,"node-detail")+'</g>';
+    });
+    el("flow-svg").innerHTML=html;el("flow-svg").setAttribute("viewBox","0 0 1000 2270");
+    if(el("map-dialog").open)renderDialogMap();
+  }
+  function syncActive(scroll){
+    var s=steps[state.step];
+    document.querySelectorAll(".flow-node").forEach(function(g){
+      var n=window.ATLAS.nodes.find(function(n){return n.id===g.dataset.node;});
+      g.classList.toggle("active",n.id===s.node);
+      g.classList.toggle("completed",Math.max.apply(null,n.steps)<state.step);
+      g.setAttribute("aria-pressed",String(n.id===s.node));
+    });
+    document.querySelectorAll(".flow-edge").forEach(function(p){p.classList.toggle("active",p.dataset.to===s.node);});
+    if(scroll){
+      var sc=el("map-scroll"),g=el("flow-svg").querySelector('[data-node="'+s.node+'"]');
+      if(g&&state.view==="flow"){
+        var r=g.getBoundingClientRect(),box=sc.getBoundingClientRect();
+        sc.scrollTo({top:sc.scrollTop+(r.top-box.top)-(sc.clientHeight/2-r.height/2),behavior:"smooth"});
+      }
+      var b=el("stage-nav").querySelector(".active");if(b){var nav=el("stage-nav");nav.scrollTo({left:b.offsetLeft-nav.offsetLeft-nav.clientWidth/2+b.clientWidth/2,behavior:"smooth"});}
+    }
+  }
+  function renderHardware(){
+    var q=state.mode==="qserve",s=steps[state.step];
+    function unit(id,title,en,data,role,detail){
+      return '<article class="hw-unit '+(s.resources.includes(id)?"is-active":"")+'"><h3>'+title+'</h3><span class="hw-en">'+en+'</span><div class="hw-data">'+data+'</div><div class="hw-role">'+role+'</div>'+(detail?'<p>'+detail+'</p>':"")+'</article>';
+    }
+    var html=unit("ssd","SSD / 磁盘","PERSISTENT STORAGE","模型文件<br>"+badge(q?"UINT4 权重":"FP16 权重"),"持久存储 · 部署时读取","不在每个 decode 步骤重读整个文件。")+
+      unit("cpu","CPU 与主机内存","HOST / CPU DRAM","文本 · 整数 ID · 调度状态<br>模型加载时的中转缓冲","CPU 调度 GPU，处理 tokenizer","CPU DRAM 与 GPU 显存是两个位置。")+
+      '<div class="hw-link">典型部署加载：SSD → CPU DRAM → PCIe → GPU 显存</div>'+
+      unit("vram","GPU 显存","DEVICE DRAM · GLOBAL MEMORY","<strong>"+(q?"W4 + 参数 · KV4 + 参数":"FP16 权重 · FP16 KV")+"</strong>临时隐藏向量、Q 等也可有显存缓冲","跨 kernel / 跨 token 保留数据","HBM 是显存类型之一；A100 用 HBM，L40S 用 GDDR6。")+
+      unit("l2","GPU L2 缓存","ON-CHIP CACHE","近期访问过的数据块<br>减少重复显存访问","多个 SM 共享 · 硬件管理","缓存命中时，读取不必每次直达 DRAM。")+
+      '<div class="hw-link">权重 / 输入按 tile 搬运；路径会因 kernel、缓存命中与融合而变化</div>'+
+      '<div class="hw-sm"><h3>SM · Streaming Multiprocessor（GPU 上的计算组织单元，通常有很多个）</h3><div class="sm-grid">'+
+      unit("shared","共享内存 / L1","ON-CHIP, DIFFERENT ROLES","共享内存：线程块协作暂存<br>L1：自动缓存","共享物理资源，但角色不同","并非每个算子都必须走共享内存。")+
+      unit("registers","寄存器","REGISTER FILE","当前输入 / 权重 tile<br>"+(q?"INT8 权重 · INT32 GEMM 累加":"FP16 操作数 · FP32 GEMM 累加")+"<br>临时 Q/K/V / attention 数据","线程直接使用 · 反复复用","FP32 累加是基础 GEMM 示例设定；attention 内部精度另依 kernel。")+
+      '</div><div class="hw-compute"><span class="'+(s.resources.includes("tensor")?"active":"")+'">Tensor Core · 矩阵乘法</span><span class="'+(s.resources.includes("cuda")?"active":"")+'">CUDA Core 等 · 通用计算</span><span class="'+(s.resources.includes("attention")?"active":"")+'">Attention kernel · 依阶段选择路径</span></div></div>';
+    el("hardware-board").innerHTML=html;
+    var compute=s.resources.includes("tensor")||state.step===6||state.step===7;
+    el("tile-demo").innerHTML='<h3>'+(compute?"放大看：一次 GEMM 的权重小块":"跨 token 保留的，和当前临时使用的")+'</h3><div class="tile-row"><div><div class="tile-bank">'+Array.from({length:32},function(_,i){return '<i class="'+(compute&&i>=8&&i<12?"active":"")+'"></i>';}).join("")+'</div><div class="tile-label">显存中的整份 W · '+(q?"4-bit 打包":"FP16")+'</div></div><span class="tile-arrow">→</span><div class="tile-stage">'+(q?"当前 tile<br>INT4 → INT8":"当前 tile<br>FP16")+'</div><span class="tile-arrow">→</span><div class="tile-stage">矩阵乘法<br>'+(q?"INT32 累加":"FP32 累加（示例）")+'</div></div><p>'+(compute?"计算完这个 tile，再载入 / 重建下一块，继续累加。暂存空间被复用，显存里的权重原件保持不变。":"权重和各层 KV cache 可跨轮保留；当前 tile、Q 和中间结果是临时工作数据。临时不等于必须在 CPU，也不等于绝不写入显存。")+'</p>';
+  }
+  function renderLedger(){
+    var rows=[
+      ["线性层的模型权重 W","FP16","显存 UINT4；寄存器重建 INT8","GPU 显存持久；tile 在片上临时","QServe g128：FP16 channel scale、UINT8 group scale、UINT4 zero point。"],
+      ["block 输入 / 残差 X","FP16","FP16","GPU 临时缓冲 / 片上数据","残差接口保留浮点；不强行要求每步都往返显存。"],
+      ["进入 GEMM 的 A","FP16","per-token INT8 + 浮点 scale","GPU 归一化 / activation kernel 准备","A 是线性层的输入，不是投影输出 Q。"],
+      ["block GEMM 操作数","FP16 × FP16","INT8 × INT8","SM 中的 Tensor Core","W4 存储不意味着用 INT4 Tensor Core 做此处的乘法。"],
+      ["block GEMM 累加","FP32（本例选用）","INT32","寄存器中的累加器","“乘法输入精度”和“累加精度”分别标注。"],
+      ["block GEMM 输出","FP16","FP16","epilogue 后的张量","QServe 在末尾乘回 scale / 转换；不是把 INT32 和 FP16 残差直接混加。"],
+      ["attention 中的 Q","FP16","FP16","临时寄存器 / GPU 缓冲；不进持久 KV cache","Q 仍继承前面 X / W 量化产生的误差，FP16 不等于恢复全精度模型。"],
+      ["投影刚产生的 K / V","FP16","FP16","投影输出；K 还经过 RoPE","K/V 并非从投影中直接以 4 bit 输出。"],
+      ["持久 KV cache","FP16 K / V","INT4 K / V + FP16 scale 和 zero point","GPU 显存，分页管理","论文采用动态 per-head 非对称 KV4；这里不假定整个历史只用一个固定 scale。"],
+      ["读入 attention 的 K / V","FP16","从 KV4 重建 FP16","分块载入的临时数据","4 → 16 bit 改变表示，无法恢复已丢失的信息。"],
+      ["QK 点积 / P×V","FP16 操作数","FP16 操作数；解码 attention 的算子级 FP16 描述","GPU attention kernel；QServe decode 使用 CUDA Core 路径","不对 softmax、归约及每条指令的内部精度作统一推断。"],
+      ["注意力系数 P","临时浮点值","临时浮点值","可以在融合 kernel 中消费","不是模型参数 W；也不是需要持续保存的 KV。"],
+      ["WO / FFN 投影","FP16 → GEMM → FP16","输入 A8，权重 W4，GEMM 输出 FP16","GPU；每个投影读取自己的权重","每个新线性层都需要自己的输入转换与权重块。"],
+      ["Residual / Norm / SiLU","FP16 张量接口","FP16 残差；Norm / SiLU 可融合 A8 输出","GPU 通用执行单元；内部归约依实现","矩阵乘法以外还有逐元素与归一化工作。"],
+      ["Embedding / LM head","FP16（教学约定）","本演示同样约定 FP16，不推断真实 QServe 设置","GPU","这些部件不属于 Fig. 8 已核实的 transformer block 量化范围。"],
+      ["token ID","INT32 / INT64，依实现","INT32 / INT64，依实现","CPU / GPU","整数编号与激活量化的 A8 无关。"]
+    ];
+    var terms=[
+      ["向量 / channel","向量是一串数；channel 是其中一个位置。一个 token 可以对应几千个位置。"],
+      ["矩阵 / 权重 W","矩阵是多行多列的数；W 是训练好的参数。投影通过输入与 W 的矩阵乘法生成新向量。"],
+      ["激活 Activation","当前输入经过模型计算得到的数据。A8 通常指进入特定线性层时的激活表示。"],
+      ["精度 / bit","一个数占多少二进制位。位数少通常更省空间，但可表示的数值刻度也更有限。"],
+      ["量化 / 重建","量化选择有限刻度；重建把这个刻度映射回数值。重建不能找回已丢失的细节。"],
+      ["GEMM / tile","GEMM 是矩阵乘法；tile 是每次合作搬运和计算的小块数据。"],
+      ["Kernel / 融合","Kernel 是 CPU 发起的一段 GPU 计算。融合把多个逻辑步骤放进一次 kernel，减少中间数据搬运。"],
+      ["持久 / 临时","持久指跨很多计算步骤保留；临时指用完后可复用其空间。Q 临时，但仍可有 GPU 显存缓冲。"]
+    ];
+    el("ledger-view").innerHTML='<p class="eyebrow">把三个精度分开：存储 / 操作数 / 累加</p><h2>同一个数据，在不同环节可以换表示。</h2><p class="view-lead">当前主线方案：'+(state.mode==="qserve"?"QServe W4A8KV4 g128":"基础 FP16")+'。下表同时保留两列对照，避免把 A8、Q 和 KV4 混在一起。</p><div class="ledger-scroll"><table class="ledger-table"><thead><tr><th>数据 / 环节</th><th>基础 FP16</th><th>QServe W4A8KV4</th><th>物理位置 / 生命周期</th><th>读表提醒</th></tr></thead><tbody>'+rows.map(function(r){return "<tr>"+r.map(function(c){return "<td>"+esc(c)+"</td>";}).join("")+"</tr>";}).join("")+'</tbody></table></div><div class="ledger-note"><strong>两种量化参数不能混为一谈：</strong>分组权重重建使用整数 group scale / zero point；KV cache 的 scale 和 zero point 按论文以 FP16 保存。QServe 的实际 A100 主基准用 per-channel 权重，不是这里展开的 g128 路径。</div><h3 style="margin:30px 0 15px">遇到这些词，可以这样读</h3><div class="glossary-list">'+terms.map(function(t){return "<div><strong>"+esc(t[0])+"</strong><p>"+esc(t[1])+"</p></div>";}).join("")+'</div>';
+  }
+  function vector(label,values,changed){return '<div class="number-vector"><span class="vlabel">'+label+'</span>'+values.map(function(v,i){return '<span class="number-cell '+(changed&&i===2?"changed":"")+'">'+fmt(v)+'</span>';}).join("")+'</div>';}
+  function quant(values){var max=Math.max.apply(null,values),step=max/15;return values.map(function(v){return Math.max(0,Math.min(15,Math.round(v/step)))*step;});}
+  function dot(a,b){return a.reduce(function(sum,v,i){return sum+v*b[i];},0);}
+  function renderScale(updateOnly){
+    var lam=state.lambda,Q=[1,1,2],K=[1,2,100],Qs=[1,1,2*lam],Ks=[1,2,100/lam],before=quant(K),after=quant(Ks);
+    function ruler(max){return '<div class="ruler">'+Array.from({length:16},function(){return "<span></span>";}).join("")+'</div><div class="ruler-labels"><span>0</span><span>16 个刻度；间隔 '+fmt(max/15)+'</span><span>'+fmt(max)+'</span></div>';}
+    var panel1='<article class="scale-panel"><h3>原来的数</h3>'+vector("K",K,false)+vector("Q",Q,false)+'<div class="scale-product">对应相乘再相加：<br>1×1 + 1×2 + 2×100 = <strong>203</strong></div>'+ruler(100)+'<p class="scale-help">如果用这 16 个刻度保存 K，1 和 2 都会被近似成 0。</p><table class="scale-mini-table"><tr><th>原始 K</th><td>'+K.map(fmt).join("，")+'</td></tr><tr><th>近似 K</th><td>'+before.map(fmt).join("，")+'</td></tr></table><p class="scale-error">量化后再点积：<strong>'+fmt(dot(Q,before))+'</strong>；误差 '+fmt(Math.abs(dot(Q,before)-203))+'</p></article>';
+    var panel2='<article class="scale-panel"><h3>只调整第三个位置</h3>'+vector("K′",Ks,true)+vector("Q′",Qs,true)+'<div class="scale-product">缩放本身的点积：<br>1×1 + 1×2 + '+fmt(Qs[2])+'×'+fmt(Ks[2])+' = <strong>203</strong></div>'+ruler(Math.max.apply(null,Ks))+'<p class="scale-help">Key 第三个数 ÷ '+lam+'；Query 对应的数 × '+lam+'。较小的 Key 范围允许更密的刻度。</p><table class="scale-mini-table"><tr><th>缩放 K′</th><td>'+Ks.map(fmt).join("，")+'</td></tr><tr><th>近似 K′</th><td>'+after.map(fmt).join("，")+'</td></tr></table><p class="scale-error">量化后再点积：<strong>'+fmt(dot(Qs,after))+'</strong>；误差 '+fmt(Math.abs(dot(Qs,after)-203))+'</p></article>';
+    if(updateOnly&&el("scale-visual")){
+      el("scale-visual").innerHTML=panel1+panel2;
+      el("lambda-label").textContent=lam+" 倍";
+      return;
+    }
+    el("scale-view").innerHTML='<p class="eyebrow">SmoothAttention 的直觉 · 独立教学实验</p><h2>一个数除以 10，另一个乘以 10。</h2><p class="view-lead">只改同一个通道上的 K 与 Q：两者乘积保持不变。QServe 让 attention 的 Q 保留 FP16，把 K 存成 4 bit；真实缩放已离线折入投影权重。这里的小实验独立于主线方案切换。</p><div class="scale-control"><label for="lambda">第三个 Key 数值缩小多少倍？<strong id="lambda-label">'+lam+' 倍</strong></label><input id="lambda" type="range" min="1" max="10" step="1" value="'+lam+'" aria-label="第三个通道的缩放倍数"><p class="scale-help">从 1 拖到 10，观察 Key 的范围、刻度间隔与量化误差。</p></div><div class="scale-layout" id="scale-visual">'+panel1+panel2+'</div><div class="ledger-note"><strong>这里保证的是缩放前后的数学点积相同。</strong>加上量化，结果仍是近似值；误差随取整变化，不保证随滑块单调改善。这个例子使用非负向量与 16 级均匀刻度，不模拟完整 QoQ、FP16 舍入、RoPE 或真实校准。Q 的 FP16 表示也不消除前面低精度 GEMM 已引入的误差。</div>';
+    el("lambda").addEventListener("input",function(e){state.lambda=Number(e.target.value);renderScale(true);});
+  }
+  function view(name){
+    state.view=name;
+    document.querySelectorAll("[data-view]").forEach(function(b){b.setAttribute("aria-selected",String(b.dataset.view===name));});
+    el("walkthrough").hidden=name!=="flow"&&name!=="hardware";
+    el("flow-view").hidden=name!=="flow";el("hardware-view").hidden=name!=="hardware";
+    el("ledger-view").hidden=name!=="ledger";el("scale-view").hidden=name!=="scale";
+    if(name==="ledger"||name==="scale")stop();
+  }
+  function renderDialogMap(){el("dialog-map").innerHTML=el("flow-svg").outerHTML.replace('id="flow-svg"','id="expanded-flow-svg"');syncActive(false);}
+  document.querySelectorAll("[data-mode]").forEach(function(b){b.addEventListener("click",function(){stop();state.mode=b.dataset.mode;renderAll();});});
+  document.querySelectorAll("[data-phase]").forEach(function(b){b.addEventListener("click",function(){stop();state.phase=b.dataset.phase;renderAll();});});
+  document.querySelectorAll("[data-view]").forEach(function(b){b.addEventListener("click",function(){view(b.dataset.view);});});
+  el("prev").addEventListener("click",function(){go(state.step-1);});
+  el("next").addEventListener("click",function(){go(state.step+1);});
+  el("restart").addEventListener("click",function(){go(0);});
+  el("play").addEventListener("click",function(){if(state.playing){stop();return;}if(state.step===steps.length-1)go(0);state.playing=true;el("play").textContent="Ⅱ 暂停演示";tick();});
+  el("speed").addEventListener("change",function(e){state.delay=Number(e.target.value);if(state.playing)tick();});
+  el("stage-nav").addEventListener("click",function(e){var b=e.target.closest("[data-step]");if(b)go(Number(b.dataset.step));});
+  function clickNode(e){
+    var g=e.target.closest("[data-node]");if(!g)return;
+    var n=window.ATLAS.nodes.find(function(n){return n.id===g.dataset.node;});go(n.steps[0]);
+    if(el("map-dialog").open){el("map-dialog").close();el("step-detail").scrollIntoView({block:"nearest",behavior:"smooth"});}
+  }
+  el("flow-svg").addEventListener("click",clickNode);el("dialog-map").addEventListener("click",clickNode);
+  function keyNode(e){if(e.key==="Enter"||e.key===" "){var g=e.target.closest("[data-node]");if(g){e.preventDefault();clickNode(e);}}}
+  el("flow-svg").addEventListener("keydown",keyNode);el("dialog-map").addEventListener("keydown",keyNode);
+  el("expand").addEventListener("click",function(){renderDialogMap();el("map-dialog").showModal();});
+  el("close-dialog").addEventListener("click",function(){el("map-dialog").close();});
+  el("map-dialog").addEventListener("click",function(e){if(e.target===el("map-dialog"))el("map-dialog").close();});
+  document.addEventListener("keydown",function(e){if(/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)||el("map-dialog").open)return;if(e.key==="ArrowRight"&&(state.view==="flow"||state.view==="hardware")){e.preventDefault();go(state.step+1);}if(e.key==="ArrowLeft"&&(state.view==="flow"||state.view==="hardware")){e.preventDefault();go(state.step-1);}});
+  document.addEventListener("visibilitychange",function(){if(document.hidden)stop();});
+  renderAll();view("flow");
+  window.INFERENCE_ATLAS={getState:function(){return Object.assign({},state);},getSteps:function(){return steps.slice();}};
+})();
+
+</script>
+</body>
+</html>
