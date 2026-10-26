@@ -72,3 +72,13 @@
 - Dashmotion 原版结构检查器：hardware.html 为 0 violations。
 - 本地 HTTP 预览受运行环境权限限制。公开上线后，已通过浏览器核对方案切换、prefill/decode、KV 8→9 的 shape、逐步导航与播放/暂停、量化滑块、显存数值、分享链接刷新恢复与 skill 选型内容；390px 视图无整页横向溢出；没有浏览器 console error。
 - 发布位置为现有公开 LLM 教学站点的独立 quantization-lab 路径。
+
+## Revision 2 · Hardware model and terminology
+
+- UI section titles and technical fields use standard English terms: Inference Overview, GEMM Precision, Storage, Compute operands, Accumulator / Reduction and Location. Operators have English names and Chinese descriptions.
+- Hardware Model is embedded in Inference Overview. It separates Host, GPU DRAM, GPU die / L2 and one illustrative SM. Shared Memory, Registers, CUDA Cores and Tensor Cores are drawn inside the SM.
+- Dtype colors are shared by hardware tensor labels, operator labels and detail tables: FP16, FP32, INT4, INT8 and INT32. Location is encoded by labeled regions; Read / Write and retained buffers are marked separately.
+- Model weights remain resident during runtime. Activations, residuals, operand tiles, accumulators and KV append / read states change with the selected operator.
+- Shared staging is an example, not a mandatory path. Attention dot-product mapping is marked kernel-dependent. Write* means optional DRAM materialization that kernel fusion may remove. This is not a profiler trace or physical chip floorplan.
+- Added 160 hardware-state invariant checks covering every recipe / phase / operator. Representative SVGs pass the existing structural checker with 0 violations.
+- GPU hierarchy checked against NVIDIA CUDA Programming Guide: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html
