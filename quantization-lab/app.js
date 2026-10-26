@@ -10,7 +10,7 @@ const bytes=n=>n>=2**30?(n/2**30).toFixed(2)+' GiB':n>=2**20?(n/2**20).toFixed(1
 const sources=ids=>ids.map(id=>{const r=M.references.find(r=>r.id===id);return r?`<a href="${r.url}" target="_blank" rel="noopener">${escape(r.name.split(' · ')[0])} ↗</a>`:'';}).join('');
 const typeFromBits=bits=>bits===4?'INT4':bits===8?'INT8':'FP16';
 const current=()=>{const stage=model.stages[state.step];state.action=Math.min(stage.frames.length-1,state.action);return{stage,frame:stage.frames[state.action]};};
-function persist(){const p=new URLSearchParams({v:'20261026f',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
+function persist(){const p=new URLSearchParams({v:'20261026g',recipe:state.recipe,phase:state.phase,step:String(state.step),action:String(state.action),snapshot:state.side,tab:state.tab});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
 function stop(){clearInterval(timer);timer=null;$('play').textContent='Play';$('play').setAttribute('aria-pressed','false');}
 function renderConfig(){
  const r=M.recipes[state.recipe],desc={fp16:'FP16 operands · FP32 accumulator',w4:'INT4 storage · FP16 GEMM',w8:'INT8 GEMM · INT32 accumulator',qserve:'INT4 → INT8 · INT8 GEMM'};
@@ -50,7 +50,7 @@ function renderCurrent(){
  $('action-timeline').innerHTML=s.frames.map((a,i)=>`<button data-action="${i}" aria-pressed="${i===state.action}" title="${escape(a.title)}"><span>${i===0?'○':i===s.frames.length-1?'●':String(i).padStart(2,'0')}</span>${escape(a.kind)}</button>`).join('');
  $('action-kind').textContent=f.kind==='Start'?'Start state':f.kind==='End'?'End state':`Action ${state.action} / ${s.frames.length-2} · ${f.kind}`;
  $('snapshot-id').textContent=`Snapshot ${String(snapshot.version).padStart(3,'0')}`;
- $('action-title').textContent=f.title;$('action-summary').innerHTML=typed(f.summary);$('action-why').innerHTML=typed(f.why);
+ $('transport-current').textContent=s.title+' / '+f.title;$('action-title').textContent=f.title;$('action-summary').innerHTML=typed(f.summary);$('action-why').innerHTML=typed(f.why);
  const route=f.from&&f.to?`<span>${escape(E.locations[f.from])}</span><span aria-hidden="true">→</span><span>${escape(E.locations[f.to])}</span>${f.dtype?V.badge(f.dtype):''}`:f.unit?`<span>Execution: ${escape(E.locations[f.unit])}</span>${f.dtype?V.badge(f.dtype):''}`:`<span>Live state · ${s.outputs.map(id=>X.tensorButton(id,model.entities[id].label)).join(' ')}</span>`;
  $('action-route').innerHTML=route;
  $('continuity-note').innerHTML=f.kind==='Start'?(state.step?`<strong>Continuous boundary</strong> End of ${escape(model.stages[state.step-1].title)} = Start of ${escape(s.title)}. No buffer changes between them.`:'<strong>Initial state</strong> FP16 source parameters are in CPU DRAM.'):f.kind==='End'&&state.step<19?`<strong>Continuous boundary</strong> This snapshot is also Start of ${escape(model.stages[state.step+1].title)}.`:'<strong>Current action only</strong> The hardware model highlights one operation. All other live buffers remain visible.';
