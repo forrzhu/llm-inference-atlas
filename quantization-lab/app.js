@@ -15,7 +15,7 @@ function typed(text){return V.rich(terminology(text));}
 function typeFromBits(bits){return bits===4?'INT4':bits===8?'INT8':'FP16';}
 function renderHardware(){const r=M.recipes[state.recipe],t=H.getTrace(r,state.phase,state.step);$('hardware-operator').innerHTML='<strong>'+escape(t.operator[0])+'</strong><span>'+escape(t.operator[1])+'</span>';$('hardware-context').textContent=state.step<2?'Initialization':state.phase+' · T='+t.T+' · S='+(state.step===6?t.S+'→'+t.n:state.step>=6?t.n:t.S);$('precision-legend').innerHTML=['FP16','FP32','INT4','INT8','INT32'].map(d=>V.badge(d,d==='INT4'?'INT4 · packed':d)).join('')+'<span class="legend-note">↗ Read &nbsp; ↳ Write &nbsp; Write* optional</span>';$('hardware-map').innerHTML=V.renderSVG(t);$('hardware-events').innerHTML=V.renderEvents(t);}
 
-function persist(){const p=new URLSearchParams({v:"20261026d",recipe:state.recipe,phase:state.phase,step:String(state.step),tab:state.tab});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
+function persist(){const p=new URLSearchParams({v:"20261026e",recipe:state.recipe,phase:state.phase,step:String(state.step),tab:state.tab});for(const id of ['bits','clip','params','batch','layers','heads','head-dim','context'])p.set(id,$(id).value);history.replaceState(null,'','?'+p);}
 function stop(){clearInterval(timer);timer=null;$('play').textContent='播放';$('play').setAttribute('aria-pressed','false');}
 function renderConfig(){
  const r=M.recipes[state.recipe],desc={fp16:'FP16 operands · FP32 accumulator',w4:'INT4 storage · FP16 GEMM',w8:'INT8 GEMM · INT32 accumulator',qserve:'INT4→INT8 · INT8 GEMM'};
